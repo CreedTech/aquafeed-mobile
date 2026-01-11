@@ -607,7 +607,7 @@ class HomeTab extends ConsumerWidget {
               Expanded(
                 child: _SectionCard(
                   title: 'Standards',
-                  subtitle: 'Coppens benchmarks',
+                  subtitle: 'AquaFeed Pro benchmarks',
                   icon: Icons.verified_outlined,
                   onTap: () => context.push('/formulation?step=1'),
                 ),
