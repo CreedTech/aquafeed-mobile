@@ -68,7 +68,7 @@ class _QuickFormulationScreenState
       ],
     ),
     _FeedTemplate(
-      name: 'Fingerling Starter',
+      name: 'Fingerling Feed',
       description: 'For early stage fish',
       ingredients: [
         'FISHMEAL 65%',
