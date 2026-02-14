@@ -37,52 +37,6 @@ class _QuickFormulationScreenState
     });
   }
 
-  // Preset ingredient combinations (no prices - uses database prices)
-  static const List<_FeedTemplate> _templates = [
-    _FeedTemplate(
-      name: 'Basic Catfish Grower',
-      description: 'Standard local ingredients',
-      ingredients: [
-        'FISHMEAL 65%',
-        'SOYABEAN MEAL',
-        'MAIZE',
-        'RICE BRAN',
-        'GROUNDNUT CAKE',
-        'PALM OIL',
-        'BONE MEAL',
-        'SALT',
-      ],
-    ),
-    _FeedTemplate(
-      name: 'High-Protein Performance',
-      description: 'Optimized for faster growth',
-      ingredients: [
-        'FISHMEAL 72%',
-        'FULL FAT SOYA',
-        'MAIZE',
-        'WHEAT OFFALS',
-        'BLOOD MEAL',
-        'PALM OIL',
-        'DICALCIUM PHOSPHATE',
-        'FISH PREMIX',
-      ],
-    ),
-    _FeedTemplate(
-      name: 'Fingerling Starter',
-      description: 'For early stage fish',
-      ingredients: [
-        'FISHMEAL 65%',
-        'SOYACAKE',
-        'MAIZE',
-        'RICE BRAN',
-        'GROUNDNUT CAKE',
-        'PALM OIL',
-        'BONE MEAL',
-        'LYSINE',
-      ],
-    ),
-  ];
-
   Future<void> _handleUnlock(FormulationResult result) async {
     final formulationId = result.formulationId;
     if (formulationId == null) return;
@@ -172,6 +126,7 @@ class _QuickFormulationScreenState
     final formulationState = ref.watch(formulationProvider);
     final standardsAsync = ref.watch(feedStandardsProvider);
     final ingredientsAsync = ref.watch(ingredientsProvider);
+    final templatesAsync = ref.watch(feedTemplatesProvider);
 
     // Check auth - show sign-in view if not logged in
     // Use hasValue to keep showing current content during background refreshes
@@ -184,6 +139,7 @@ class _QuickFormulationScreenState
         formulationState,
         standardsAsync,
         ingredientsAsync,
+        templatesAsync,
       );
     }
 
@@ -218,6 +174,7 @@ class _QuickFormulationScreenState
     AsyncValue<List<FormulationResult>?> formulationState,
     AsyncValue<List<FeedStandard>> standardsAsync,
     AsyncValue<List<Ingredient>> ingredientsAsync,
+    AsyncValue<List<FeedTemplate>> templatesAsync,
   ) {
     return Scaffold(
       backgroundColor: AppTheme.white,
@@ -249,7 +206,7 @@ class _QuickFormulationScreenState
                 },
                 onUnlock: () => _handleUnlock(results.first),
               )
-            : _buildForm(standardsAsync, ingredientsAsync),
+            : _buildForm(standardsAsync, ingredientsAsync, templatesAsync),
         loading: () => const Center(child: AuraLoader()),
         error: (error, _) {
           if (error is PaymentRequiredException) {
@@ -273,6 +230,7 @@ class _QuickFormulationScreenState
   Widget _buildForm(
     AsyncValue<List<FeedStandard>> standardsAsync,
     AsyncValue<List<Ingredient>> ingredientsAsync,
+    AsyncValue<List<FeedTemplate>> templatesAsync,
   ) {
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -287,78 +245,89 @@ class _QuickFormulationScreenState
           ),
         ),
         const SizedBox(height: 12),
-        ...List.generate(_templates.length, (index) {
-          final template = _templates[index];
-          final isSelected = index == _selectedTemplateIndex;
-          return GestureDetector(
-            onTap: () => setState(() => _selectedTemplateIndex = index),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? AppTheme.primaryGreen.withValues(alpha: 0.08)
-                    : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isSelected ? AppTheme.primaryGreen : AppTheme.grey200,
-                  width: isSelected ? 1.5 : 1,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 20,
-                    height: 20,
+        templatesAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Text('Error: $e'),
+          data: (templates) {
+            if (templates.isEmpty) return const Text('No templates found');
+            return Column(
+              children: List.generate(templates.length, (index) {
+                final template = templates[index];
+                final isSelected = index == _selectedTemplateIndex;
+                return GestureDetector(
+                  onTap: () => setState(() => _selectedTemplateIndex = index),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: isSelected
-                          ? AppTheme.primaryGreen
-                          : Colors.transparent,
-                      shape: BoxShape.circle,
+                          ? AppTheme.primaryGreen.withValues(alpha: 0.08)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(
                         color: isSelected
                             ? AppTheme.primaryGreen
-                            : AppTheme.grey400,
-                        width: 1.5,
+                            : AppTheme.grey200,
+                        width: isSelected ? 1.5 : 1,
                       ),
                     ),
-                    child: isSelected
-                        ? const Center(
-                            child: Icon(
-                              Icons.check,
-                              color: Colors.white,
-                              size: 12,
-                            ),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        Text(
-                          template.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
+                        Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppTheme.primaryGreen
+                                : Colors.transparent,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppTheme.primaryGreen
+                                  : AppTheme.grey400,
+                              width: 1.5,
+                            ),
                           ),
+                          child: isSelected
+                              ? const Center(
+                                  child: Icon(
+                                    Icons.check,
+                                    color: Colors.white,
+                                    size: 12,
+                                  ),
+                                )
+                              : null,
                         ),
-                        Text(
-                          template.description,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppTheme.grey600,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                template.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              Text(
+                                template.description,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppTheme.grey600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          );
-        }),
+                );
+              }),
+            );
+          },
+        ),
 
         const SizedBox(height: 24),
 
@@ -515,22 +484,29 @@ class _QuickFormulationScreenState
         ingredientsAsync.when(
           loading: () => const SizedBox.shrink(),
           error: (_, __) => const SizedBox.shrink(),
-          data: (ingredients) => ElevatedButton(
-            onPressed: _selectedStandardId != null
-                ? () => _calculate(ingredients)
-                : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryGreen,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: AppTheme.grey200,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          data: (ingredients) => templatesAsync.when(
+            loading: () => const SizedBox.shrink(),
+            error: (_, __) => const SizedBox.shrink(),
+            data: (templates) => ElevatedButton(
+              onPressed: _selectedStandardId != null && templates.isNotEmpty
+                  ? () => _calculate(
+                      ingredients,
+                      templates[_selectedTemplateIndex],
+                    )
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryGreen,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: AppTheme.grey200,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-            ),
-            child: const Text(
-              'Calculate',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              child: const Text(
+                'Calculate',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
             ),
           ),
         ),
@@ -556,11 +532,10 @@ class _QuickFormulationScreenState
     );
   }
 
-  void _calculate(List<Ingredient> allIngredients) {
-    final template = _templates[_selectedTemplateIndex];
+  void _calculate(List<Ingredient> allIngredients, FeedTemplate template) {
     final selected = <SelectedIngredient>[];
 
-    for (final name in template.ingredients) {
+    for (final name in template.ingredientNames) {
       final ingredient = allIngredients.firstWhere(
         (i) => i.name.toUpperCase() == name.toUpperCase(),
         orElse: () => Ingredient(
@@ -812,16 +787,4 @@ class _ErrorView extends StatelessWidget {
       ),
     );
   }
-}
-
-class _FeedTemplate {
-  final String name;
-  final String description;
-  final List<String> ingredients;
-
-  const _FeedTemplate({
-    required this.name,
-    required this.description,
-    required this.ingredients,
-  });
 }

@@ -42,7 +42,9 @@ class DetailedResultView extends StatelessWidget {
                       Text(
                         result.isUnlocked
                             ? currencyFormatter.format(result.totalCost)
-                            : '₦ 84,500', // Dummy for blur teasing
+                            : currencyFormatter.format(
+                                result.totalCost,
+                              ), // Using real value for blur
                         style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.w700,
@@ -61,7 +63,7 @@ class DetailedResultView extends StatelessWidget {
                       Text(
                         result.isUnlocked
                             ? '${currencyFormatter.format(result.costPerKg)}/kg'
-                            : '₦ 1,250/kg', // Dummy for blur teasing
+                            : '${currencyFormatter.format(result.costPerKg)}/kg', // Using real value for blur
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ],
@@ -77,7 +79,7 @@ class DetailedResultView extends StatelessWidget {
                       Text(
                         result.isUnlocked
                             ? '${result.qualityMatch.toStringAsFixed(1)}%'
-                            : '98.5%', // Dummy for blur teasing
+                            : '${result.qualityMatch.toStringAsFixed(1)}%', // Using real value for blur
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ],
@@ -363,15 +365,17 @@ class _NutrientStatusRow extends StatelessWidget {
     // Format nutrient name nicely
     final displayName = _formatNutrientName(status.nutrient);
 
+    final unit = status.nutrient.toLowerCase() == 'energy' ? ' kcal' : '%';
+
     // Mask Target range for demo
     String targetDisplay;
     if (!isUnlocked) {
-      targetDisplay = 'XX.X%';
+      targetDisplay = 'XX.X$unit';
     } else if (status.targetMin != null && status.targetMax != null) {
       targetDisplay =
-          '${status.targetMin!.toStringAsFixed(1)}-${status.targetMax!.toStringAsFixed(1)}%';
+          '${status.targetMin!.toStringAsFixed(0)}-${status.targetMax!.toStringAsFixed(0)}$unit';
     } else {
-      targetDisplay = '${status.targetValue.toStringAsFixed(1)}%';
+      targetDisplay = '${status.targetValue.toStringAsFixed(0)}$unit';
     }
 
     // Color and text based on status
@@ -414,7 +418,9 @@ class _NutrientStatusRow extends StatelessWidget {
           ),
           Expanded(
             child: Text(
-              isUnlocked ? '${status.actual.toStringAsFixed(1)}%' : '--',
+              isUnlocked
+                  ? '${status.actual.toStringAsFixed(status.nutrient.toLowerCase() == 'energy' ? 0 : 1)}$unit'
+                  : '--',
               style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               textAlign: TextAlign.center,
             ),
@@ -472,6 +478,10 @@ class _NutrientStatusRow extends StatelessWidget {
         return 'Protein';
       case 'fat':
         return 'Fat';
+      case 'energy':
+        return 'Energy (ME)';
+      case 'carbohydrate':
+        return 'Carbohydrate';
       case 'fiber':
         return 'Fiber';
       case 'ash':
@@ -485,7 +495,7 @@ class _NutrientStatusRow extends StatelessWidget {
       case 'phosphorous':
         return 'Phosphorous';
       default:
-        return nutrient;
+        return nutrient[0].toUpperCase() + nutrient.substring(1);
     }
   }
 }

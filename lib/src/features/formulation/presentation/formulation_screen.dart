@@ -27,19 +27,27 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
     with SingleTickerProviderStateMixin {
   late int _currentStep;
   late TabController _tabController;
+  late TextEditingController _searchController;
   int _selectedOptionIndex = 0;
+  String _searchQuery = '';
 
   final Set<String> _selectedIngredientIds = {};
   final Map<String, double> _customPrices = {};
   double _targetWeight = 100;
   String? _selectedStandardId;
   double _overheadCost = 0; // Milling, processing, pelletizing, transport
+  String _selectedCategory = 'Catfish';
+  String? _selectedPoultryType;
 
   @override
   void initState() {
     super.initState();
     _currentStep = widget.initialStep;
     _tabController = TabController(length: 3, vsync: this);
+    _searchController = TextEditingController();
+    _searchController.addListener(() {
+      setState(() => _searchQuery = _searchController.text.toLowerCase());
+    });
 
     // Initial check for user access to set reasonable default weight
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -53,6 +61,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     _disablePrivacy();
     super.dispose();
   }
@@ -311,13 +320,18 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
           return const Center(child: Text('No ingredients available'));
         }
 
-        final proteins = ingredients
+        final filteredIngredients = ingredients.where((i) {
+          if (_searchQuery.isEmpty) return true;
+          return i.name.toLowerCase().contains(_searchQuery);
+        }).toList();
+
+        final proteins = filteredIngredients
             .where((i) => i.category == 'PROTEIN')
             .toList();
-        final energy = ingredients
+        final energy = filteredIngredients
             .where((i) => i.category == 'CARBOHYDRATE' || i.category == 'FIBER')
             .toList();
-        final others = ingredients
+        final others = filteredIngredients
             .where(
               (i) =>
                   i.category != 'PROTEIN' &&
@@ -328,6 +342,23 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
 
         return Column(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search ingredients...',
+                  prefixIcon: const Icon(Icons.search, color: AppTheme.grey400),
+                  filled: true,
+                  fillColor: AppTheme.grey100,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                ),
+              ),
+            ),
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
@@ -435,26 +466,6 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                       color: AppTheme.grey600,
                     ),
                   ),
-                  if (!(ref.watch(currentUserProvider).value?.hasFullAccess ??
-                      false))
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryGreen.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'DEMO: MAX 5KG',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.primaryGreen,
-                        ),
-                      ),
-                    ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -463,15 +474,9 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                   Expanded(
                     child: Builder(
                       builder: (context) {
-                        final hasFullAccess =
-                            ref
-                                .watch(currentUserProvider)
-                                .value
-                                ?.hasFullAccess ??
-                            false;
-                        final minWeight = hasFullAccess ? 10.0 : 1.0;
-                        final maxWeight = hasFullAccess ? 1000.0 : 5.0;
-                        final divisions = hasFullAccess ? 99 : 4;
+                        const minWeight = 10.0;
+                        const maxWeight = 5000.0;
+                        const divisions = 499;
 
                         // Ensure current value is within valid range
                         double safeWeight = _targetWeight;
@@ -513,10 +518,81 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
         ),
         const SizedBox(height: 24),
 
-        // Feed standard selection
+        // Feed category selection
         const Text(
-          'Select Feed Standard',
+          'Feed Category',
           style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            color: AppTheme.grey600,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _CategoryButton(
+                label: 'Catfish',
+                icon: Icons.set_meal_outlined,
+                isSelected: _selectedCategory == 'Catfish',
+                onTap: () => setState(() {
+                  _selectedCategory = 'Catfish';
+                  _selectedPoultryType = null;
+                  _selectedStandardId = null;
+                }),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _CategoryButton(
+                label: 'Poultry',
+                icon: Icons.egg_outlined,
+                isSelected: _selectedCategory == 'Poultry',
+                onTap: () => setState(() {
+                  _selectedCategory = 'Poultry';
+                  _selectedPoultryType = 'Broiler';
+                  _selectedStandardId = null;
+                }),
+              ),
+            ),
+          ],
+        ),
+        if (_selectedCategory == 'Poultry') ...[
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: ChoiceChip(
+                  label: const Text('Broiler'),
+                  selected: _selectedPoultryType == 'Broiler',
+                  onSelected: (selected) => setState(() {
+                    _selectedPoultryType = 'Broiler';
+                    _selectedStandardId = null;
+                  }),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ChoiceChip(
+                  label: const Text('Layer'),
+                  selected: _selectedPoultryType == 'Layer',
+                  onSelected: (selected) => setState(() {
+                    _selectedPoultryType = 'Layer';
+                    _selectedStandardId = null;
+                  }),
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 24),
+
+        // Feed standard selection
+        Text(
+          _selectedCategory == 'Catfish'
+              ? 'Select Weight Range'
+              : 'Select Growth Phase',
+          style: const TextStyle(
             fontWeight: FontWeight.w600,
             fontSize: 14,
             color: AppTheme.grey600,
@@ -530,11 +606,29 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
             style: const TextStyle(color: AppTheme.errorRed),
           ),
           data: (standards) {
-            if (standards.isEmpty) {
-              return const Text('No feed standards available');
+            final filtered = standards
+                .where(
+                  (s) =>
+                      s.feedCategory == _selectedCategory &&
+                      (_selectedCategory != 'Poultry' ||
+                          s.poultryType == _selectedPoultryType),
+                )
+                .toList();
+
+            if (filtered.isEmpty) {
+              return Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppTheme.grey100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                  child: Text('No standards found for this selection'),
+                ),
+              );
             }
             return Column(
-              children: standards
+              children: filtered
                   .map(
                     (std) => StandardTile(
                       standard: std,
@@ -1145,6 +1239,55 @@ class _StatusItem extends StatelessWidget {
         ),
         Text(label, style: TextStyle(fontSize: 12, color: AppTheme.grey600)),
       ],
+    );
+  }
+}
+
+class _CategoryButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _CategoryButton({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryGreen : AppTheme.grey100,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryGreen : AppTheme.grey200,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.white : AppTheme.grey600,
+              size: 24,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : AppTheme.grey600,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

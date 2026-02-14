@@ -7,37 +7,54 @@ import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/formulation/presentation/formulation_screen.dart';
 import '../../features/formulation/presentation/quick_formulation_screen.dart';
 import '../../features/payment/presentation/wallet_screen.dart';
+import '../../features/onboarding/presentation/onboarding_screen.dart';
+import '../../features/onboarding/data/onboarding_repository.dart';
 
 part 'app_router.g.dart';
 
 @riverpod
 GoRouter goRouter(Ref ref) {
   final userAsync = ref.watch(currentUserProvider);
+  final onboardingAsync = ref.watch(hasCompletedOnboardingProvider);
 
   return GoRouter(
     initialLocation: '/dashboard',
     redirect: (context, state) {
-      // If user is loading, don't redirect yet
-      if (userAsync.isLoading) return null;
+      // If loading critical state, don't redirect yet
+      if (userAsync.isLoading || onboardingAsync.isLoading) return null;
 
       final user = userAsync.value;
-      final loggingIn =
-          state.matchedLocation == '/login' ||
-          state.matchedLocation == '/verify-otp';
+      final hasCompletedOnboarding = onboardingAsync.value ?? false;
 
-      if (user == null) {
-        // Not logged in -> redirect to login unless already there
-        return loggingIn ? null : '/login';
+      final matchedLocation = state.matchedLocation;
+      final isLoggingIn =
+          matchedLocation == '/login' || matchedLocation == '/verify-otp';
+      final isOnboarding = matchedLocation == '/onboarding';
+
+      // 1. Mandatory Onboarding for first visit
+      if (!hasCompletedOnboarding && !isOnboarding) {
+        return '/onboarding';
       }
 
-      // Logged in -> redirect to dashboard if on login screen
-      if (loggingIn) {
+      // 2. Auth Redirection
+      if (user == null) {
+        // Not logged in -> redirect to login (unless already there or on onboarding)
+        if (isLoggingIn || isOnboarding) return null;
+        return '/login';
+      }
+
+      // 3. Prevent returning to login/onboarding if logged in
+      if (isLoggingIn || isOnboarding) {
         return '/dashboard';
       }
 
       return null;
     },
     routes: [
+      GoRoute(
+        path: '/onboarding',
+        builder: (context, state) => const OnboardingScreen(),
+      ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(
         path: '/verify-otp',

@@ -65,6 +65,9 @@ class FeedStandard {
   final String brand;
   final String stage;
   final String? pelletSize;
+  final String feedCategory;
+  final String? poultryType;
+  final int tolerance;
 
   FeedStandard({
     required this.id,
@@ -72,6 +75,9 @@ class FeedStandard {
     required this.brand,
     required this.stage,
     this.pelletSize,
+    required this.feedCategory,
+    this.poultryType,
+    required this.tolerance,
   });
 
   factory FeedStandard.fromJson(Map<String, dynamic> json) {
@@ -81,6 +87,39 @@ class FeedStandard {
       brand: json['brand'] ?? '',
       stage: json['stage'] ?? '',
       pelletSize: json['pelletSize'],
+      feedCategory: json['feedCategory'] ?? 'Catfish',
+      poultryType: json['poultryType'],
+      tolerance: json['tolerance'] ?? 2,
+    );
+  }
+}
+
+/// Feed Template model for Quick Mix
+class FeedTemplate {
+  final String id;
+  final String name;
+  final String description;
+  final String feedCategory;
+  final String? poultryType;
+  final List<String> ingredientNames;
+
+  FeedTemplate({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.feedCategory,
+    this.poultryType,
+    required this.ingredientNames,
+  });
+
+  factory FeedTemplate.fromJson(Map<String, dynamic> json) {
+    return FeedTemplate(
+      id: json['_id'] ?? '',
+      name: json['name'] ?? '',
+      description: json['description'] ?? '',
+      feedCategory: json['feedCategory'] ?? 'Catfish',
+      poultryType: json['poultryType'],
+      ingredientNames: List<String>.from(json['ingredientNames'] ?? []),
     );
   }
 }
@@ -267,6 +306,15 @@ Future<List<FeedStandard>> feedStandards(Ref ref) async {
   final response = await dio.get('/standards');
   final data = response.data['standards'] as List? ?? [];
   return data.map((s) => FeedStandard.fromJson(s)).toList();
+}
+
+/// Feed templates provider
+@riverpod
+Future<List<FeedTemplate>> feedTemplates(Ref ref) async {
+  final dio = await ref.watch(dioProvider.future);
+  final response = await dio.get('/templates');
+  final data = response.data as List? ?? [];
+  return data.map((t) => FeedTemplate.fromJson(t)).toList();
 }
 
 /// Formulation notifier for managing the formulation flow
