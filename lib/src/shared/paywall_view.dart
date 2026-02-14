@@ -66,7 +66,7 @@ class PaywallView extends StatelessWidget {
                 const SizedBox(height: 12),
                 _buildBenefitRow(
                   Icons.check_circle,
-                  'Unlock full production recipes (₦10,000 per mix)',
+                  'Unlock full production recipes (pay per unlocked mix)',
                 ),
                 const SizedBox(height: 12),
                 _buildBenefitRow(

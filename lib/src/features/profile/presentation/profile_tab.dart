@@ -5,6 +5,7 @@ import 'package:iconsax_flutter/iconsax_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../formulation/data/formulation_repository.dart';
 
 class ProfileTab extends ConsumerWidget {
   const ProfileTab({super.key});
@@ -41,6 +42,13 @@ class _UltraProfileContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final unlockFeeFuture = ref
+        .read(formulationProvider.notifier)
+        .getUnlockFee();
+    final currencyFormatter = NumberFormat.currency(
+      symbol: '₦',
+      decimalDigits: 0,
+    );
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
@@ -178,7 +186,11 @@ class _UltraProfileContent extends StatelessWidget {
                 const SizedBox(height: 12),
                 // Subscription upgrade CTA for free users
                 if (user.tier == 'free' || user.tier == 'pay_as_you_mix')
-                  _UpgradeCard(currentTier: user.tier),
+                  _UpgradeCard(
+                    currentTier: user.tier,
+                    unlockFeeFuture: unlockFeeFuture,
+                    currencyFormatter: currencyFormatter,
+                  ),
                 if (user.tier == 'free' || user.tier == 'pay_as_you_mix')
                   const SizedBox(height: 16),
                 _buildMenuSection(
@@ -411,7 +423,7 @@ class _UltraProfileContent extends StatelessWidget {
             _HelpItem(
               question: 'How do I unlock a production mix?',
               answer:
-                  'Perform a calculation, then tap "Unlock Production Mix". This costs ₦10,000 from your wallet per formula.',
+                  'Perform a calculation, then tap "Unlock Production Mix". The current fee is set by admin and charged from your wallet per formula.',
             ),
             _HelpItem(
               question: 'How do I top up my wallet?',
@@ -628,7 +640,7 @@ class _PremiumLogoutButton extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Iconsax.logout, color: AppTheme.error, size: 20),
-            const SizedBox(width: 12),
+            SizedBox(width: 12),
             Text(
               'Logout Account',
               style: TextStyle(
@@ -646,8 +658,14 @@ class _PremiumLogoutButton extends StatelessWidget {
 
 class _UpgradeCard extends StatelessWidget {
   final String currentTier;
+  final Future<double> unlockFeeFuture;
+  final NumberFormat currencyFormatter;
 
-  const _UpgradeCard({required this.currentTier});
+  const _UpgradeCard({
+    required this.currentTier,
+    required this.unlockFeeFuture,
+    required this.currencyFormatter,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -707,22 +725,28 @@ class _UpgradeCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '₦10,000',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    Text(
-                      'per unlocked mix',
-                      style: TextStyle(color: Colors.white70, fontSize: 11),
-                    ),
-                  ],
+                FutureBuilder<double>(
+                  future: unlockFeeFuture,
+                  builder: (context, snapshot) {
+                    final amount = (snapshot.data ?? 10000).toDouble();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          currencyFormatter.format(amount),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const Text(
+                          'per unlocked mix',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(

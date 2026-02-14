@@ -3,13 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/auth_required_view.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../formulation/data/formulation_repository.dart';
 import '../data/payment_repository.dart';
 
 /// Wallet & Billing Screen
-/// Simple pricing: ₦10,000 for full access, 1 free trial formula
 class WalletScreen extends ConsumerWidget {
   const WalletScreen({super.key});
 
@@ -43,6 +44,9 @@ class WalletScreen extends ConsumerWidget {
 
           final hasAccess = user.hasFullAccess;
           final usedFreeTrial = user.freeTrialUsed;
+          final unlockFeeFuture = ref
+              .read(formulationProvider.notifier)
+              .getUnlockFee();
 
           return ListView(
             padding: const EdgeInsets.all(20),
@@ -117,6 +121,8 @@ class WalletScreen extends ConsumerWidget {
               _AccessStatusCard(
                 hasAccess: hasAccess,
                 usedFreeTrial: usedFreeTrial,
+                unlockFeeFuture: unlockFeeFuture,
+                formatter: formatter,
               ),
               const SizedBox(height: 24),
 
@@ -166,27 +172,33 @@ class WalletScreen extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    const Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '₦10,000',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        Padding(
-                          padding: EdgeInsets.only(bottom: 6, left: 4),
-                          child: Text(
-                            '/ formula',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: AppTheme.grey600,
+                    FutureBuilder<double>(
+                      future: unlockFeeFuture,
+                      builder: (context, snapshot) {
+                        final amount = (snapshot.data ?? 10000).toDouble();
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              formatter.format(amount),
+                              style: const TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
-                        ),
-                      ],
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 6, left: 4),
+                              child: Text(
+                                '/ formula',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: AppTheme.grey600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
                     _FeatureRow(text: 'Production weight (Unlimited kg)'),
@@ -314,10 +326,14 @@ class _SectionTitle extends StatelessWidget {
 class _AccessStatusCard extends StatelessWidget {
   final bool hasAccess;
   final bool usedFreeTrial;
+  final Future<double> unlockFeeFuture;
+  final NumberFormat formatter;
 
   const _AccessStatusCard({
     required this.hasAccess,
     required this.usedFreeTrial,
+    required this.unlockFeeFuture,
+    required this.formatter,
   });
 
   @override
@@ -362,14 +378,27 @@ class _AccessStatusCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  hasAccess
-                      ? 'Unlimited formulations available'
-                      : usedFreeTrial
-                      ? 'Pay ₦10,000 for full access'
-                      : '1 free trial remaining',
-                  style: TextStyle(fontSize: 12, color: AppTheme.grey600),
-                ),
+                if (hasAccess)
+                  Text(
+                    'Unlimited formulations available',
+                    style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                  )
+                else if (usedFreeTrial)
+                  FutureBuilder<double>(
+                    future: unlockFeeFuture,
+                    builder: (context, snapshot) {
+                      final amount = (snapshot.data ?? 10000).toDouble();
+                      return Text(
+                        'Pay ${formatter.format(amount)} for full access',
+                        style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                      );
+                    },
+                  )
+                else
+                  Text(
+                    '1 free trial remaining',
+                    style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                  ),
               ],
             ),
           ),
@@ -418,22 +447,50 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
       final paymentInit = await paymentService.initializeTopUp(_selectedAmount);
 
       if (!mounted) return;
+      final checkoutUri = Uri.tryParse(paymentInit.authorizationUrl);
+      if (checkoutUri == null) {
+        throw 'Invalid Paystack checkout URL returned from server';
+      }
 
-      // For now, show the authorization URL or handle in-app
-      // In production, use flutter_paystack or url_launcher
+      final opened = await launchUrl(
+        checkoutUri,
+        mode: LaunchMode.inAppBrowserView,
+      );
+
+      if (!opened) {
+        throw 'Unable to open payment checkout';
+      }
+
+      final verificationResult = await _promptForVerification(
+        paymentService: paymentService,
+        reference: paymentInit.reference,
+      );
+
+      if (!mounted) return;
+
+      if (verificationResult == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Payment checkout opened. You can verify this payment anytime from Wallet.',
+            ),
+          ),
+        );
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Payment initiated. Reference: ${paymentInit.reference}',
-          ),
-          backgroundColor: AppTheme.primary,
-          duration: const Duration(seconds: 3),
+          content: Text(verificationResult.message),
+          backgroundColor: verificationResult.success
+              ? AppTheme.success
+              : AppTheme.error,
         ),
       );
 
-      // Close sheet and refresh user data
-      Navigator.pop(context);
-      ref.invalidate(currentUserProvider);
+      if (verificationResult.success) {
+        Navigator.pop(context);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -448,7 +505,104 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
     }
   }
 
+  Future<PaymentVerificationResult?> _promptForVerification({
+    required PaymentService paymentService,
+    required String reference,
+  }) async {
+    return showDialog<PaymentVerificationResult?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        bool isVerifying = false;
+        String? verificationError;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Verify Payment'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Complete payment in Paystack, then tap Verify to credit your wallet.',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Reference: $reference',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.grey600,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (verificationError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    verificationError!,
+                    style: const TextStyle(color: AppTheme.error, fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: isVerifying
+                    ? null
+                    : () => Navigator.pop(dialogContext, null),
+                child: const Text('Later'),
+              ),
+              ElevatedButton(
+                onPressed: isVerifying
+                    ? null
+                    : () async {
+                        setDialogState(() {
+                          isVerifying = true;
+                          verificationError = null;
+                        });
+
+                        final result = await paymentService.verifyPayment(
+                          reference,
+                        );
+
+                        if (!dialogContext.mounted) return;
+
+                        if (result.success) {
+                          Navigator.pop(dialogContext, result);
+                          return;
+                        }
+
+                        setDialogState(() {
+                          verificationError = result.message;
+                          isVerifying = false;
+                        });
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: isVerifying
+                    ? const SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Verify'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final unlockFeeFuture = ref
+        .read(formulationProvider.notifier)
+        .getUnlockFee();
     return Container(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
@@ -469,9 +623,15 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          Text(
-            'Minimum ₦10,000 for full access',
-            style: TextStyle(color: AppTheme.grey600),
+          FutureBuilder<double>(
+            future: unlockFeeFuture,
+            builder: (context, snapshot) {
+              final amount = (snapshot.data ?? 10000).toDouble();
+              return Text(
+                'Recommended minimum ${NumberFormat.currency(symbol: '₦', decimalDigits: 0).format(amount)} for one unlock',
+                style: const TextStyle(color: AppTheme.grey600),
+              );
+            },
           ),
           const SizedBox(height: 24),
           Wrap(
