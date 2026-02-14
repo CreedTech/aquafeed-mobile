@@ -98,6 +98,52 @@ final class FeedStandardsProvider
 
 String _$feedStandardsHash() => r'1ad33376f71b69287d8d4f7977fde02fc971a9e8';
 
+/// Feed templates provider
+
+@ProviderFor(feedTemplates)
+const feedTemplatesProvider = FeedTemplatesProvider._();
+
+/// Feed templates provider
+
+final class FeedTemplatesProvider
+    extends
+        $FunctionalProvider<
+          AsyncValue<List<FeedTemplate>>,
+          List<FeedTemplate>,
+          FutureOr<List<FeedTemplate>>
+        >
+    with
+        $FutureModifier<List<FeedTemplate>>,
+        $FutureProvider<List<FeedTemplate>> {
+  /// Feed templates provider
+  const FeedTemplatesProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'feedTemplatesProvider',
+        isAutoDispose: true,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$feedTemplatesHash();
+
+  @$internal
+  @override
+  $FutureProviderElement<List<FeedTemplate>> $createElement(
+    $ProviderPointer pointer,
+  ) => $FutureProviderElement(pointer);
+
+  @override
+  FutureOr<List<FeedTemplate>> create(Ref ref) {
+    return feedTemplates(ref);
+  }
+}
+
+String _$feedTemplatesHash() => r'c2a3b0e6fcfcde35214d1e10feb451f7911eff58';
+
 /// Formulation notifier for managing the formulation flow
 
 @ProviderFor(FormulationNotifier)
@@ -140,7 +186,7 @@ final class FormulationNotifierProvider
 }
 
 String _$formulationNotifierHash() =>
-    r'd96f314b90f4d823a5d7bbb1627a277a9382f56f';
+    r'cb25ac26ae85d78c2af7160786cef229d7760607';
 
 /// Formulation notifier for managing the formulation flow
 
