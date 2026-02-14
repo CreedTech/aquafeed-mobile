@@ -19,10 +19,18 @@ Future<PersistCookieJar> cookieJar(Ref ref) async {
 Future<Dio> dio(Ref ref) async {
   final dio = Dio();
 
-  // Handle Localhost for Android Emulator vs iOS Simulator
-  final baseUrl = Platform.isAndroid
-      ? 'http://10.0.2.2:5001/api/v1'
-      : 'http://127.0.0.1:5001/api/v1';
+  // Prefer compile-time environment override:
+  // flutter run --dart-define=API_BASE_URL=https://your-host/api/v1
+  final configuredBaseUrl = const String.fromEnvironment('API_BASE_URL');
+
+  // Fallback for local development (Android emulator / iOS simulator).
+  final baseUrl = configuredBaseUrl.isNotEmpty
+      ? configuredBaseUrl
+      : (kIsWeb
+            ? 'http://127.0.0.1:5001/api/v1'
+            : (Platform.isAndroid
+                  ? 'http://10.0.2.2:5001/api/v1'
+                  : 'http://127.0.0.1:5001/api/v1'));
 
   dio.options = BaseOptions(
     baseUrl: baseUrl,
@@ -64,6 +72,7 @@ Future<Dio> dio(Ref ref) async {
           debugPrint('--- Dio Error ---');
           debugPrint('Url: ${e.requestOptions.uri}');
           debugPrint('Status: ${e.response?.statusCode}');
+          debugPrint('Body: ${e.response?.data}');
           debugPrint('-----------------');
         }
         return handler.next(e);
