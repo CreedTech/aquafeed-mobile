@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 import 'package:no_screenshot/no_screenshot.dart';
+import 'package:intl/intl.dart';
+import 'package:dio/dio.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/auth_required_view.dart';
 import '../../auth/data/auth_repository.dart';
@@ -14,6 +16,8 @@ import 'widgets/detailed_result_view.dart';
 import 'widgets/ingredient_tile.dart';
 import 'widgets/standard_tile.dart';
 import '../../../shared/paywall_view.dart';
+
+enum _IngredientSortMode { relevance, proteinHigh, priceLow }
 
 class FormulationScreen extends ConsumerStatefulWidget {
   final int initialStep;
@@ -30,14 +34,23 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
   late TextEditingController _searchController;
   int _selectedOptionIndex = 0;
   String _searchQuery = '';
+  bool _showSelectedOnly = false;
+  _IngredientSortMode _ingredientSortMode = _IngredientSortMode.relevance;
 
   final Set<String> _selectedIngredientIds = {};
   final Map<String, double> _customPrices = {};
+  final Map<String, double> _minInclusionPct = {};
+  final Map<String, double> _maxInclusionPct = {};
   double _targetWeight = 100;
   String? _selectedStandardId;
   double _overheadCost = 0; // Milling, processing, pelletizing, transport
-  String _selectedCategory = 'Catfish';
+  String _selectedCategory = 'Fish';
   String? _selectedPoultryType;
+  double _unlockFee = 10000;
+  final NumberFormat _currencyFormatter = NumberFormat.currency(
+    symbol: '₦',
+    decimalDigits: 0,
+  );
 
   @override
   void initState() {
@@ -48,14 +61,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.toLowerCase());
     });
-
-    // Initial check for user access to set reasonable default weight
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = ref.read(currentUserProvider).value;
-      if (user != null && !user.hasFullAccess && _targetWeight > 5) {
-        setState(() => _targetWeight = 5);
-      }
-    });
+    _loadUnlockFee();
   }
 
   @override
@@ -87,13 +93,14 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
   Future<void> _handleUnlock(FormulationResult result) async {
     final formulationId = result.formulationId;
     if (formulationId == null) return;
+    final feeLabel = _currencyFormatter.format(_unlockFee);
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Unlock Production Mix'),
-        content: const Text(
-          'This will deduct ₦10,000 from your wallet to unlock the full production recipe.',
+        content: Text(
+          'This will deduct $feeLabel from your wallet to unlock the full production recipe.',
         ),
         actions: [
           TextButton(
@@ -150,15 +157,36 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-      final errorMsg = e.toString().contains('Insufficient balance')
-          ? 'Insufficient balance. Please top up your wallet.'
-          : 'Failed to unlock: $e';
+      String errorMsg = 'Failed to unlock formulation. Please try again.';
+      bool requiresDeposit = false;
+
+      if (e is DioException) {
+        final data = e.response?.data;
+        if (data is Map) {
+          final message = data['message']?.toString();
+          final error = data['error']?.toString();
+          errorMsg = (message != null && message.isNotEmpty)
+              ? message
+              : ((error != null && error.isNotEmpty)
+                    ? error
+                    : (e.message ?? errorMsg));
+          requiresDeposit =
+              data['requiresDeposit'] == true ||
+              (error?.toLowerCase().contains('insufficient') ?? false);
+        } else if (e.message != null && e.message!.isNotEmpty) {
+          errorMsg = e.message!;
+        }
+      } else {
+        final fallback = e.toString().replaceFirst('Exception: ', '').trim();
+        if (fallback.isNotEmpty) errorMsg = fallback;
+        requiresDeposit = fallback.toLowerCase().contains('insufficient');
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(errorMsg),
           backgroundColor: AppTheme.errorRed,
-          action: e.toString().contains('Insufficient balance')
+          action: requiresDeposit
               ? SnackBarAction(
                   label: 'Deposit',
                   textColor: Colors.white,
@@ -168,6 +196,12 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
         ),
       );
     }
+  }
+
+  Future<void> _loadUnlockFee() async {
+    final fee = await ref.read(formulationProvider.notifier).getUnlockFee();
+    if (!mounted) return;
+    setState(() => _unlockFee = fee > 0 ? fee : 10000);
   }
 
   void _goBack() {
@@ -247,9 +281,9 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
       appBar: AppBar(
         title: Text(
           _currentStep == 0
-              ? 'Select Ingredients'
-              : _currentStep == 1
               ? 'Configure Mix'
+              : _currentStep == 1
+              ? 'Select Ingredients'
               : 'Results',
           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
         ),
@@ -277,9 +311,9 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
           // Content
           Expanded(
             child: _currentStep == 0
-                ? _buildIngredientSelection(ingredientsAsync)
-                : _currentStep == 1
                 ? _buildConfigStep(standardsAsync)
+                : _currentStep == 1
+                ? _buildIngredientSelection(ingredientsAsync)
                 : _buildResultStep(formulationState),
           ),
 
@@ -320,18 +354,45 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
           return const Center(child: Text('No ingredients available'));
         }
 
-        final filteredIngredients = ingredients.where((i) {
+        var visibleIngredients = ingredients.where((i) {
           if (_searchQuery.isEmpty) return true;
           return i.name.toLowerCase().contains(_searchQuery);
         }).toList();
 
-        final proteins = filteredIngredients
+        if (_showSelectedOnly) {
+          visibleIngredients = visibleIngredients
+              .where(
+                (ingredient) => _selectedIngredientIds.contains(ingredient.id),
+              )
+              .toList();
+        }
+
+        visibleIngredients.sort((a, b) {
+          final aSelected = _selectedIngredientIds.contains(a.id);
+          final bSelected = _selectedIngredientIds.contains(b.id);
+          if (aSelected != bSelected) return aSelected ? -1 : 1;
+
+          switch (_ingredientSortMode) {
+            case _IngredientSortMode.proteinHigh:
+              final byProtein = (b.nutrients['protein'] ?? 0).compareTo(
+                a.nutrients['protein'] ?? 0,
+              );
+              return byProtein != 0 ? byProtein : a.name.compareTo(b.name);
+            case _IngredientSortMode.priceLow:
+              final byPrice = a.defaultPrice.compareTo(b.defaultPrice);
+              return byPrice != 0 ? byPrice : a.name.compareTo(b.name);
+            case _IngredientSortMode.relevance:
+              return a.name.compareTo(b.name);
+          }
+        });
+
+        final proteins = visibleIngredients
             .where((i) => i.category == 'PROTEIN')
             .toList();
-        final energy = filteredIngredients
+        final energy = visibleIngredients
             .where((i) => i.category == 'CARBOHYDRATE' || i.category == 'FIBER')
             .toList();
-        final others = filteredIngredients
+        final others = visibleIngredients
             .where(
               (i) =>
                   i.category != 'PROTEIN' &&
@@ -339,28 +400,164 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                   i.category != 'FIBER',
             )
             .toList();
+        final selectedIngredients =
+            ingredients
+                .where(
+                  (ingredient) =>
+                      _selectedIngredientIds.contains(ingredient.id),
+                )
+                .toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
 
         return Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search ingredients...',
-                  prefixIcon: const Icon(Icons.search, color: AppTheme.grey400),
-                  filled: true,
-                  fillColor: AppTheme.grey100,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search ingredients...',
+                        prefixIcon: const Icon(
+                          Icons.search,
+                          color: AppTheme.grey400,
+                        ),
+                        suffixIcon: _searchQuery.isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _searchQuery = '');
+                                },
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  color: AppTheme.grey400,
+                                ),
+                              ),
+                        filled: true,
+                        fillColor: AppTheme.grey100,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                      ),
+                    ),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                ),
+                  const SizedBox(width: 8),
+                  PopupMenuButton<_IngredientSortMode>(
+                    tooltip: 'Sort list',
+                    color: Colors.white,
+                    icon: Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: AppTheme.grey100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.sort_rounded,
+                        color: AppTheme.grey600,
+                      ),
+                    ),
+                    onSelected: (value) => setState(() {
+                      _ingredientSortMode = value;
+                    }),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: _IngredientSortMode.relevance,
+                        child: Text('Sort by name'),
+                      ),
+                      PopupMenuItem(
+                        value: _IngredientSortMode.proteinHigh,
+                        child: Text('Sort by protein'),
+                      ),
+                      PopupMenuItem(
+                        value: _IngredientSortMode.priceLow,
+                        child: Text('Sort by price'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FilterChip(
+                      selected: _showSelectedOnly,
+                      showCheckmark: false,
+                      label: Text(
+                        _showSelectedOnly ? 'Selected only' : 'All ingredients',
+                      ),
+                      onSelected: (value) =>
+                          setState(() => _showSelectedOnly = value),
+                      selectedColor: AppTheme.primaryGreen.withValues(
+                        alpha: 0.16,
+                      ),
+                      backgroundColor: AppTheme.grey100,
+                      side: BorderSide(
+                        color: _showSelectedOnly
+                            ? AppTheme.primaryGreen.withValues(alpha: 0.35)
+                            : AppTheme.grey200,
+                      ),
+                      labelStyle: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: _showSelectedOnly
+                            ? AppTheme.primaryGreen
+                            : AppTheme.grey600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 36,
+                    child: OutlinedButton(
+                      onPressed: selectedIngredients.isEmpty
+                          ? null
+                          : () => _showSelectedIngredientsSheet(ingredients),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 36),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        side: BorderSide(color: AppTheme.grey200),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: Text('Selected ${selectedIngredients.length}'),
+                    ),
+                  ),
+                  if (selectedIngredients.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      height: 36,
+                      child: TextButton(
+                        onPressed: () => setState(() {
+                          _selectedIngredientIds.clear();
+                          _customPrices.clear();
+                          _minInclusionPct.clear();
+                          _maxInclusionPct.clear();
+                        }),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 36),
+                          visualDensity: VisualDensity.compact,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        child: const Text('Clear'),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              margin: const EdgeInsets.fromLTRB(16, 2, 16, 6),
               decoration: BoxDecoration(
                 color: AppTheme.grey100,
                 borderRadius: BorderRadius.circular(12),
@@ -379,10 +576,10 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
                 ),
-                tabs: const [
-                  Tab(text: 'Proteins'),
-                  Tab(text: 'Energy'),
-                  Tab(text: 'Others'),
+                tabs: [
+                  Tab(text: 'Protein (${proteins.length})'),
+                  Tab(text: 'Energy (${energy.length})'),
+                  Tab(text: 'Others (${others.length})'),
                 ],
               ),
             ),
@@ -405,16 +602,28 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
   Widget _buildIngredientList(List<Ingredient> ingredients) {
     if (ingredients.isEmpty) {
       return Center(
-        child: Text(
-          'No ingredients in this category',
-          style: TextStyle(color: AppTheme.grey600),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.inbox_rounded, color: AppTheme.grey400, size: 30),
+            const SizedBox(height: 8),
+            Text(
+              'No ingredients in this category',
+              style: TextStyle(color: AppTheme.grey600),
+            ),
+          ],
         ),
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+    return ListView.separated(
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
       itemCount: ingredients.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final ing = ingredients[index];
         return IngredientTile(
@@ -425,10 +634,14 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
             if (_selectedIngredientIds.contains(ing.id)) {
               _selectedIngredientIds.remove(ing.id);
               _customPrices.remove(ing.id);
+              _minInclusionPct.remove(ing.id);
+              _maxInclusionPct.remove(ing.id);
             } else {
               _selectedIngredientIds.add(ing.id);
             }
           }),
+          minInclusionPct: _minInclusionPct[ing.id],
+          maxInclusionPct: _maxInclusionPct[ing.id],
           onPriceChanged: (price) => setState(() {
             if (price != null && price != ing.defaultPrice) {
               _customPrices[ing.id] = price;
@@ -436,6 +649,134 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
               _customPrices.remove(ing.id);
             }
           }),
+          onConstraintsChanged: (minPct, maxPct) => setState(() {
+            if (minPct != null) {
+              _minInclusionPct[ing.id] = minPct;
+            } else {
+              _minInclusionPct.remove(ing.id);
+            }
+            if (maxPct != null) {
+              _maxInclusionPct[ing.id] = maxPct;
+            } else {
+              _maxInclusionPct.remove(ing.id);
+            }
+          }),
+        );
+      },
+    );
+  }
+
+  void _showSelectedIngredientsSheet(List<Ingredient> allIngredients) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, sheetSetState) {
+            final selectedIngredients =
+                allIngredients
+                    .where((i) => _selectedIngredientIds.contains(i.id))
+                    .toList()
+                  ..sort((a, b) => a.name.compareTo(b.name));
+
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(context).size.height * 0.72,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 12, 10),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Selected (${selectedIngredients.length})',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (selectedIngredients.isNotEmpty)
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _selectedIngredientIds.clear();
+                                  _customPrices.clear();
+                                  _minInclusionPct.clear();
+                                  _maxInclusionPct.clear();
+                                });
+                                sheetSetState(() {});
+                              },
+                              child: const Text('Clear all'),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: selectedIngredients.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No ingredients selected',
+                                style: TextStyle(color: AppTheme.grey600),
+                              ),
+                            )
+                          : ListView.separated(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                              itemCount: selectedIngredients.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final ingredient = selectedIngredients[index];
+                                return ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 2,
+                                  ),
+                                  title: Text(
+                                    ingredient.name,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    ingredient.category
+                                        .replaceAll('_', ' ')
+                                        .toLowerCase(),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: AppTheme.grey600,
+                                    ),
+                                  ),
+                                  trailing: IconButton(
+                                    tooltip: 'Remove',
+                                    onPressed: () {
+                                      setState(() {
+                                        _selectedIngredientIds.remove(
+                                          ingredient.id,
+                                        );
+                                        _customPrices.remove(ingredient.id);
+                                        _minInclusionPct.remove(ingredient.id);
+                                        _maxInclusionPct.remove(ingredient.id);
+                                      });
+                                      sheetSetState(() {});
+                                    },
+                                    icon: const Icon(
+                                      Icons.remove_circle_outline_rounded,
+                                      color: AppTheme.errorRed,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -532,11 +873,11 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
           children: [
             Expanded(
               child: _CategoryButton(
-                label: 'Catfish',
+                label: 'Fish',
                 icon: Icons.set_meal_outlined,
-                isSelected: _selectedCategory == 'Catfish',
+                isSelected: _selectedCategory == 'Fish',
                 onTap: () => setState(() {
-                  _selectedCategory = 'Catfish';
+                  _selectedCategory = 'Fish';
                   _selectedPoultryType = null;
                   _selectedStandardId = null;
                 }),
@@ -589,8 +930,8 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
 
         // Feed standard selection
         Text(
-          _selectedCategory == 'Catfish'
-              ? 'Select Weight Range'
+          _selectedCategory == 'Fish'
+              ? 'Select Fish Stage'
               : 'Select Growth Phase',
           style: const TextStyle(
             fontWeight: FontWeight.w600,
@@ -609,7 +950,12 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
             final filtered = standards
                 .where(
                   (s) =>
-                      s.feedCategory == _selectedCategory &&
+                      ((_selectedCategory == 'Fish' &&
+                              (s.feedCategory == 'Catfish' ||
+                                  (s.feedType ?? '').toLowerCase() ==
+                                      'fish')) ||
+                          (_selectedCategory == 'Poultry' &&
+                              s.feedCategory == 'Poultry')) &&
                       (_selectedCategory != 'Poultry' ||
                           s.poultryType == _selectedPoultryType),
                 )
@@ -773,46 +1119,6 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                     setState(() => _selectedOptionIndex = index),
               ),
 
-              if (result.isDemo) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppTheme.black.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppTheme.black.withValues(alpha: 0.1),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, color: AppTheme.black),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Demo Calculation',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 14,
-                              ),
-                            ),
-                            Text(
-                              'Demo Mix: Quantities for your full target weight are hidden. Unlock to reveal exact ratios and mixing instructions.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppTheme.grey600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
               const SizedBox(height: 24),
 
               // Selected result details
@@ -820,7 +1126,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
               const SizedBox(height: 24),
 
               // Action buttons
-              if (!result.isUnlocked) ...[
+              if (!result.isUnlocked && result.formulationId != null) ...[
                 SizedBox(
                   width: double.infinity,
                   child: Container(
@@ -865,7 +1171,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Unlock full recipe for ₦10,000',
+                            'Unlock full recipe for ${_currencyFormatter.format(_unlockFee)}',
                             style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.9),
                               fontWeight: FontWeight.w600,
@@ -939,12 +1245,232 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
     );
   }
 
+  FormulationRequest _buildCurrentRequest() {
+    return FormulationRequest(
+      targetWeightKg: _targetWeight,
+      standardId: _selectedStandardId!,
+      selectedIngredients: _selectedIngredientIds
+          .map(
+            (id) => SelectedIngredient(
+              ingredientId: id,
+              customPrice: _customPrices[id],
+              minInclusionPct: _minInclusionPct[id],
+              maxInclusionPct: _maxInclusionPct[id],
+            ),
+          )
+          .toList(),
+      overheadCost: _overheadCost,
+    );
+  }
+
+  Future<void> _previewRecommendedAction(RecommendedAction action) async {
+    if (_selectedStandardId == null) return;
+    final request = _buildCurrentRequest();
+
+    try {
+      final preview = await ref
+          .read(formulationProvider.notifier)
+          .previewFix(originalRequest: request, action: action);
+
+      if (!mounted) return;
+      final accepted = await showModalBottomSheet<bool>(
+        context: context,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                action.label,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                action.description,
+                style: const TextStyle(
+                  color: AppTheme.grey600,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.grey100,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Estimated Cost Delta: ${preview.estimatedCostDelta?.toStringAsFixed(2) ?? '--'}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Estimated Quality Delta: ${preview.estimatedComplianceDelta?.toStringAsFixed(2) ?? '--'}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Preview Options: ${preview.options.length}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryGreen,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Use This Fix'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (accepted == true) {
+        ref.read(formulationProvider.notifier).usePreviewResult(preview);
+        _enablePrivacy();
+        setState(() {
+          _currentStep = 2;
+          _selectedOptionIndex = 0;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is InfeasibleFormulationException
+          ? e.suggestion
+          : 'Unable to apply this fix preview.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: AppTheme.errorRed),
+      );
+    }
+  }
+
   Widget _buildErrorState(Object error) {
     if (error is PaymentRequiredException) {
       return PaywallView(
         featureName: 'Feed Formulation',
         description: error.message,
         icon: Icons.lock_outline,
+      );
+    }
+
+    if (error is InfeasibleFormulationException) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'We Could Not Meet Your Targets Yet',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.black,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              error.message,
+              style: const TextStyle(fontSize: 14, color: AppTheme.grey600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error.suggestion,
+              style: const TextStyle(fontSize: 13, color: AppTheme.grey600),
+            ),
+            if (error.violations.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const Text(
+                'Detected constraints',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              ...error.violations
+                  .take(4)
+                  .map(
+                    (violation) => Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppTheme.grey100,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '• ${violation.message}',
+                        style: const TextStyle(fontSize: 12, height: 1.4),
+                      ),
+                    ),
+                  ),
+            ],
+            if (error.recommendedActions.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text(
+                'One-tap fixes',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              ...error.recommendedActions.map(
+                (action) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => _previewRecommendedAction(action),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.black,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: Text(action.label),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () {
+                  ref.read(formulationProvider.notifier).reset();
+                  setState(() => _currentStep = 0);
+                },
+                child: const Text('Edit Ingredients Manually'),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -1079,13 +1605,13 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
     }
 
     final bool canProceed = _currentStep == 0
-        ? _selectedIngredientIds.length >= 5 &&
+        ? _selectedStandardId != null
+        : _selectedIngredientIds.length >= 5 &&
               proteinCount > 0 &&
-              energyCount > 0
-        : _selectedStandardId != null;
+              energyCount > 0;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -1101,48 +1627,54 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_currentStep == 0) ...[
-              // Show warnings if any
+            if (_currentStep == 1) ...[
               if (warnings.isNotEmpty && _selectedIngredientIds.isNotEmpty)
                 Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.grey100,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: AppTheme.grey200),
                   ),
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(
                         Icons.info_outline,
-                        size: 18,
+                        size: 16,
                         color: AppTheme.grey600,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          warnings.join('\n'),
-                          style: TextStyle(
+                          warnings.first,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
                             fontSize: 12,
                             color: AppTheme.grey600,
-                            height: 1.4,
                           ),
                         ),
                       ),
+                      if (warnings.length > 1)
+                        Text(
+                          '+${warnings.length - 1}',
+                          style: const TextStyle(
+                            color: AppTheme.grey600,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              // Selection summary
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.grey100,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
                     _StatusItem(
                       label: 'High Protein',
@@ -1158,7 +1690,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
             ],
             SizedBox(
               width: double.infinity,
@@ -1168,7 +1700,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                   backgroundColor: AppTheme.primaryGreen,
                   foregroundColor: Colors.white,
                   disabledBackgroundColor: AppTheme.grey200,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -1193,19 +1725,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
       setState(() => _currentStep = 1);
     } else {
       // Calculate formulation
-      final request = FormulationRequest(
-        targetWeightKg: _targetWeight,
-        standardId: _selectedStandardId!,
-        selectedIngredients: _selectedIngredientIds
-            .map(
-              (id) => SelectedIngredient(
-                ingredientId: id,
-                customPrice: _customPrices[id],
-              ),
-            )
-            .toList(),
-        overheadCost: _overheadCost,
-      );
+      final request = _buildCurrentRequest();
 
       _enablePrivacy();
       ref.read(formulationProvider.notifier).calculate(request);
@@ -1228,17 +1748,27 @@ class _StatusItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final met = count >= min;
-    return Column(
-      children: [
-        Text(
-          '$count/$min',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: met ? AppTheme.primaryGreen : AppTheme.grey600,
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: met
+            ? AppTheme.primaryGreen.withValues(alpha: 0.1)
+            : AppTheme.grey100,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: met
+              ? AppTheme.primaryGreen.withValues(alpha: 0.35)
+              : AppTheme.grey200,
         ),
-        Text(label, style: TextStyle(fontSize: 12, color: AppTheme.grey600)),
-      ],
+      ),
+      child: Text(
+        '$label $count/$min',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: met ? AppTheme.primaryGreen : AppTheme.grey600,
+        ),
+      ),
     );
   }
 }
