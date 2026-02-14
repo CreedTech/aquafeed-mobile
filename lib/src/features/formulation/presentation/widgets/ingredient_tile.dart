@@ -58,7 +58,7 @@ class IngredientTile extends StatelessWidget {
             ),
             const SizedBox(width: 12),
 
-            // Name + Price
+            // Name + Price + Nutrients
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -71,12 +71,29 @@ class IngredientTile extends StatelessWidget {
                       color: AppTheme.black,
                     ),
                   ),
-                  Text(
-                    '₦${price.toStringAsFixed(0)}/${ingredient.unit}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppTheme.grey600,
-                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Text(
+                        '₦${price.toStringAsFixed(0)}/${ingredient.unit}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.grey600,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildNutrientBadge(
+                        'CP',
+                        '${ingredient.nutrients['protein']?.toStringAsFixed(1) ?? '0'}%',
+                        isWarning: (ingredient.nutrients['protein'] ?? 0) <= 0,
+                      ),
+                      const SizedBox(width: 4),
+                      _buildNutrientBadge(
+                        'ME',
+                        '${ingredient.nutrients['energy']?.toStringAsFixed(0) ?? '0'}',
+                        isWarning: (ingredient.nutrients['energy'] ?? 0) <= 0,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -96,6 +113,42 @@ class IngredientTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNutrientBadge(
+    String label,
+    String value, {
+    bool isWarning = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: isWarning
+            ? AppTheme.errorRed.withValues(alpha: 0.1)
+            : AppTheme.grey100,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isWarning)
+            const Icon(
+              Icons.warning_amber_rounded,
+              size: 10,
+              color: AppTheme.errorRed,
+            ),
+          if (isWarning) const SizedBox(width: 2),
+          Text(
+            '$label: $value',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: isWarning ? AppTheme.errorRed : AppTheme.grey600,
+            ),
+          ),
+        ],
       ),
     );
   }
