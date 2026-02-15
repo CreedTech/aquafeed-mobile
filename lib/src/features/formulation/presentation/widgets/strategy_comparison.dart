@@ -129,31 +129,29 @@ class StrategyComparison extends StatelessWidget {
                                         : AppTheme.black,
                                   ),
                                 ),
-                                if (badge != null) ...[
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? Colors.white.withValues(alpha: 0.2)
+                                        : AppTheme.grey100,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    badge,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
                                       color: isSelected
-                                          ? Colors.white.withValues(alpha: 0.2)
-                                          : AppTheme.grey100,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      badge,
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        color: isSelected
-                                            ? Colors.white
-                                            : AppTheme.grey600,
-                                      ),
+                                          ? Colors.white
+                                          : AppTheme.grey600,
                                     ),
                                   ),
-                                ],
+                                ),
                               ],
                             ),
                             const SizedBox(height: 2),

@@ -13,9 +13,9 @@ class StepIndicator extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _StepDot(index: 0, currentStep: currentStep, label: 'Ingredients'),
+          _StepDot(index: 0, currentStep: currentStep, label: 'Config'),
           _buildConnector(0),
-          _StepDot(index: 1, currentStep: currentStep, label: 'Config'),
+          _StepDot(index: 1, currentStep: currentStep, label: 'Ingredients'),
           _buildConnector(1),
           _StepDot(index: 2, currentStep: currentStep, label: 'Result'),
         ],

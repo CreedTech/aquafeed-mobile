@@ -26,6 +26,20 @@ class PaymentInit {
   }
 }
 
+class PaymentVerificationResult {
+  final bool success;
+  final String message;
+  final double? amount;
+  final bool alreadyProcessed;
+
+  PaymentVerificationResult({
+    required this.success,
+    required this.message,
+    this.amount,
+    this.alreadyProcessed = false,
+  });
+}
+
 /// Payment service for handling payments via backend
 class PaymentService {
   final Dio _dio;
@@ -43,17 +57,38 @@ class PaymentService {
   }
 
   /// Verify payment after completion
-  Future<bool> verifyPayment(String reference) async {
+  Future<PaymentVerificationResult> verifyPayment(String reference) async {
     try {
       final response = await _dio.get('/payments/verify?reference=$reference');
+      final data = response.data;
       final success = response.statusCode == 200;
+
       if (success) {
-        // Refresh user data to get updated access status
         _ref.invalidate(currentUserProvider);
       }
-      return success;
-    } on DioException {
-      return false;
+
+      return PaymentVerificationResult(
+        success: success,
+        message: (data is Map && data['message'] != null)
+            ? data['message'].toString()
+            : (success
+                  ? 'Payment verified successfully'
+                  : 'Verification failed'),
+        amount: (data is Map && data['amount'] != null)
+            ? (data['amount'] as num).toDouble()
+            : null,
+        alreadyProcessed: data is Map && data['alreadyProcessed'] == true
+            ? true
+            : false,
+      );
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final message = data is Map
+          ? (data['message']?.toString() ??
+                data['error']?.toString() ??
+                'Verification failed')
+          : 'Verification failed';
+      return PaymentVerificationResult(success: false, message: message);
     }
   }
 

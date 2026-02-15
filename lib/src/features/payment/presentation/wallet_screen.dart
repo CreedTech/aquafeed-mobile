@@ -1,20 +1,106 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/auth_required_view.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../formulation/data/formulation_repository.dart';
 import '../data/payment_repository.dart';
 
 /// Wallet & Billing Screen
-/// Simple pricing: ₦10,000 for full access, 1 free trial formula
-class WalletScreen extends ConsumerWidget {
+class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends ConsumerState<WalletScreen>
+    with WidgetsBindingObserver {
+  String? _pendingPaymentReference;
+  bool _isVerifyingPending = false;
+  Timer? _resumeVerifyTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    _resumeVerifyTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _pendingPaymentReference != null) {
+      _resumeVerifyTimer?.cancel();
+      _resumeVerifyTimer = Timer(const Duration(milliseconds: 700), () {
+        if (!mounted) return;
+        _attemptAutoVerifyPending(silent: true);
+      });
+    }
+  }
+
+  void _markPendingReference(String reference) {
+    if (!mounted) return;
+    setState(() => _pendingPaymentReference = reference);
+  }
+
+  Future<void> _attemptAutoVerifyPending({required bool silent}) async {
+    final reference = _pendingPaymentReference;
+    if (reference == null || reference.isEmpty || _isVerifyingPending) return;
+
+    _isVerifyingPending = true;
+    try {
+      final paymentService = await ref.read(paymentServiceProvider.future);
+      final result = await paymentService.verifyPayment(reference);
+
+      if (!mounted) return;
+      if (result.success) {
+        setState(() => _pendingPaymentReference = null);
+        ref.invalidate(currentUserProvider);
+        if (!silent) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.message),
+              backgroundColor: AppTheme.success,
+            ),
+          );
+        }
+      } else if (!silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.message),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted && !silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not verify payment right now.'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    } finally {
+      _isVerifyingPending = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final userAsync = ref.watch(currentUserProvider);
     final formatter = NumberFormat.currency(symbol: '₦', decimalDigits: 0);
 
@@ -43,6 +129,9 @@ class WalletScreen extends ConsumerWidget {
 
           final hasAccess = user.hasFullAccess;
           final usedFreeTrial = user.freeTrialUsed;
+          final unlockFeeFuture = ref
+              .read(formulationProvider.notifier)
+              .getUnlockFee();
 
           return ListView(
             padding: const EdgeInsets.all(20),
@@ -84,7 +173,7 @@ class WalletScreen extends ConsumerWidget {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () => _showTopUpSheet(context, ref),
+                        onPressed: () => _showTopUpSheet(context),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           foregroundColor: AppTheme.primary,
@@ -111,12 +200,59 @@ class WalletScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 24),
 
+              if (_pendingPaymentReference != null)
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.info.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTheme.info.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Payment Confirmation In Progress',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.black,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Ref: $_pendingPaymentReference',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.grey600,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _isVerifyingPending
+                            ? 'Verifying payment automatically...'
+                            : 'Waiting for payment callback...',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.grey600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              if (_pendingPaymentReference != null) const SizedBox(height: 20),
+
               // Access Status
               _SectionTitle(title: 'ACCESS STATUS'),
               const SizedBox(height: 12),
               _AccessStatusCard(
                 hasAccess: hasAccess,
                 usedFreeTrial: usedFreeTrial,
+                unlockFeeFuture: unlockFeeFuture,
+                formatter: formatter,
               ),
               const SizedBox(height: 24),
 
@@ -166,27 +302,33 @@ class WalletScreen extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    const Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '₦10,000',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        Padding(
-                          padding: EdgeInsets.only(bottom: 6, left: 4),
-                          child: Text(
-                            '/ formula',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: AppTheme.grey600,
+                    FutureBuilder<double>(
+                      future: unlockFeeFuture,
+                      builder: (context, snapshot) {
+                        final amount = (snapshot.data ?? 10000).toDouble();
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              formatter.format(amount),
+                              style: const TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
-                        ),
-                      ],
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 6, left: 4),
+                              child: Text(
+                                '/ formula',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: AppTheme.grey600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
                     _FeatureRow(text: 'Production weight (Unlimited kg)'),
@@ -281,12 +423,12 @@ class WalletScreen extends ConsumerWidget {
     );
   }
 
-  void _showTopUpSheet(BuildContext context, WidgetRef ref) {
+  void _showTopUpSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _TopUpSheet(),
+      builder: (_) => _TopUpSheet(onCheckoutInitialized: _markPendingReference),
     );
   }
 
@@ -314,10 +456,14 @@ class _SectionTitle extends StatelessWidget {
 class _AccessStatusCard extends StatelessWidget {
   final bool hasAccess;
   final bool usedFreeTrial;
+  final Future<double> unlockFeeFuture;
+  final NumberFormat formatter;
 
   const _AccessStatusCard({
     required this.hasAccess,
     required this.usedFreeTrial,
+    required this.unlockFeeFuture,
+    required this.formatter,
   });
 
   @override
@@ -362,14 +508,27 @@ class _AccessStatusCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  hasAccess
-                      ? 'Unlimited formulations available'
-                      : usedFreeTrial
-                      ? 'Pay ₦10,000 for full access'
-                      : '1 free trial remaining',
-                  style: TextStyle(fontSize: 12, color: AppTheme.grey600),
-                ),
+                if (hasAccess)
+                  Text(
+                    'Unlimited formulations available',
+                    style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                  )
+                else if (usedFreeTrial)
+                  FutureBuilder<double>(
+                    future: unlockFeeFuture,
+                    builder: (context, snapshot) {
+                      final amount = (snapshot.data ?? 10000).toDouble();
+                      return Text(
+                        'Pay ${formatter.format(amount)} for full access',
+                        style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                      );
+                    },
+                  )
+                else
+                  Text(
+                    '1 free trial remaining',
+                    style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                  ),
               ],
             ),
           ),
@@ -399,7 +558,9 @@ class _FeatureRow extends StatelessWidget {
 }
 
 class _TopUpSheet extends ConsumerStatefulWidget {
-  const _TopUpSheet();
+  final ValueChanged<String> onCheckoutInitialized;
+
+  const _TopUpSheet({required this.onCheckoutInitialized});
 
   @override
   ConsumerState<_TopUpSheet> createState() => _TopUpSheetState();
@@ -416,24 +577,33 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
     try {
       final paymentService = await ref.read(paymentServiceProvider.future);
       final paymentInit = await paymentService.initializeTopUp(_selectedAmount);
+      widget.onCheckoutInitialized(paymentInit.reference);
+
+      if (!mounted) return;
+      final checkoutUri = Uri.tryParse(paymentInit.authorizationUrl);
+      if (checkoutUri == null) {
+        throw 'Invalid Paystack checkout URL returned from server';
+      }
+
+      final opened = await launchUrl(
+        checkoutUri,
+        mode: LaunchMode.inAppBrowserView,
+      );
+
+      if (!opened) {
+        throw 'Unable to open payment checkout';
+      }
 
       if (!mounted) return;
 
-      // For now, show the authorization URL or handle in-app
-      // In production, use flutter_paystack or url_launcher
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           content: Text(
-            'Payment initiated. Reference: ${paymentInit.reference}',
+            'Complete payment in Paystack. You will be redirected back to AquaFeed automatically.',
           ),
-          backgroundColor: AppTheme.primary,
-          duration: const Duration(seconds: 3),
         ),
       );
-
-      // Close sheet and refresh user data
-      Navigator.pop(context);
-      ref.invalidate(currentUserProvider);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -448,7 +618,11 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
     }
   }
 
+  @override
   Widget build(BuildContext context) {
+    final unlockFeeFuture = ref
+        .read(formulationProvider.notifier)
+        .getUnlockFee();
     return Container(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
@@ -469,9 +643,15 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          Text(
-            'Minimum ₦10,000 for full access',
-            style: TextStyle(color: AppTheme.grey600),
+          FutureBuilder<double>(
+            future: unlockFeeFuture,
+            builder: (context, snapshot) {
+              final amount = (snapshot.data ?? 10000).toDouble();
+              return Text(
+                'Recommended minimum ${NumberFormat.currency(symbol: '₦', decimalDigits: 0).format(amount)} for one unlock',
+                style: const TextStyle(color: AppTheme.grey600),
+              );
+            },
           ),
           const SizedBox(height: 24),
           Wrap(

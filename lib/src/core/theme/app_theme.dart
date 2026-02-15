@@ -171,7 +171,7 @@ class AppTheme {
           foregroundColor: white,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          minimumSize: const Size(double.infinity, minTouchTarget),
+          minimumSize: const Size(0, minTouchTarget),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusMd),
           ),
@@ -187,7 +187,7 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           foregroundColor: black,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          minimumSize: const Size(double.infinity, minTouchTarget),
+          minimumSize: const Size(0, minTouchTarget),
           side: const BorderSide(color: grey200, width: 1.5),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusMd),
@@ -322,7 +322,7 @@ class AppTheme {
           foregroundColor: darkBg,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          minimumSize: const Size(double.infinity, minTouchTarget),
+          minimumSize: const Size(0, minTouchTarget),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusMd),
           ),
@@ -338,7 +338,7 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           foregroundColor: darkTextPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          minimumSize: const Size(double.infinity, minTouchTarget),
+          minimumSize: const Size(0, minTouchTarget),
           side: const BorderSide(color: darkGrey, width: 1.5),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radiusMd),

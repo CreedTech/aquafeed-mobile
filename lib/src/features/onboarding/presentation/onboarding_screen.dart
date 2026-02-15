@@ -19,7 +19,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     OnboardingSlide(
       title: 'Scientific Feed Formulation',
       description:
-          'Precision is everything. We audit every nutrient—Protein, Energy, Amino Acids—to ensure your ingredients meet scientific standards.',
+          'Precision is everything. We audit every nutrient - Protein, Energy, Amino Acids - to ensure your ingredients meet scientific standards.',
       icon: Icons.science_outlined,
       color: AppTheme.primaryGreen,
     ),
@@ -47,84 +47,93 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   ];
 
   @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.black,
-      body: Stack(
-        children: [
-          PageView.builder(
-            controller: _pageController,
-            onPageChanged: (index) => setState(() => _currentPage = index),
-            itemCount: _slides.length,
-            itemBuilder: (context, index) {
-              final slide = _slides[index];
-              return Padding(
-                padding: const EdgeInsets.all(40.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(30),
-                      decoration: BoxDecoration(
-                        color: slide.color.withValues(alpha: 0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(slide.icon, size: 80, color: slide.color),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  if (_currentPage != index) {
+                    setState(() => _currentPage = index);
+                  }
+                },
+                itemCount: _slides.length,
+                itemBuilder: (context, index) {
+                  final slide = _slides[index];
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(28, 24, 28, 20),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(30),
+                          decoration: BoxDecoration(
+                            color: slide.color.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(slide.icon, size: 80, color: slide.color),
+                        ),
+                        const SizedBox(height: 44),
+                        Text(
+                          slide.title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          slide.description,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white.withValues(alpha: 0.72),
+                            height: 1.6,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 60),
-                    Text(
-                      slide.title,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      slide.description,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.white.withValues(alpha: 0.7),
-                        height: 1.6,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-          Positioned(
-            bottom: 60,
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(
-                    _slides.length,
-                    (index) => AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      height: 8,
-                      width: _currentPage == index ? 24 : 8,
-                      decoration: BoxDecoration(
-                        color: _currentPage == index
-                            ? AppTheme.primaryGreen
-                            : AppTheme.grey600.withValues(alpha: 0.5),
-                        borderRadius: BorderRadius.circular(4),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(
+                      _slides.length,
+                      (index) => AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        height: 8,
+                        width: _currentPage == index ? 24 : 8,
+                        decoration: BoxDecoration(
+                          color: _currentPage == index
+                              ? AppTheme.primaryGreen
+                              : AppTheme.grey600.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 40),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40),
-                  child: Row(
+                  const SizedBox(height: 26),
+                  Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       TextButton(
@@ -138,15 +147,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         onPressed: _currentPage == _slides.length - 1
                             ? _completeOnboarding
                             : () => _pageController.nextPage(
-                                duration: const Duration(milliseconds: 400),
+                                duration: const Duration(milliseconds: 350),
                                 curve: Curves.easeInOut,
                               ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppTheme.primaryGreen,
                           foregroundColor: AppTheme.black,
+                          // Override app-wide infinite min width in Row layout.
+                          minimumSize: const Size(0, AppTheme.minTouchTarget),
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 32,
-                            vertical: 16,
+                            horizontal: 28,
+                            vertical: 14,
                           ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
@@ -162,17 +173,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       ),
                     ],
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Future<void> _completeOnboarding() async {
     await ref.read(onboardingRepositoryProvider).completeOnboarding();
+    ref.invalidate(hasCompletedOnboardingProvider);
     if (mounted) context.go('/login');
   }
 }

@@ -17,6 +17,126 @@ class PaymentRequiredException implements Exception {
   String toString() => message;
 }
 
+class ConstraintViolation {
+  final String constraintId;
+  final String type;
+  final String? nutrient;
+  final double current;
+  final double required;
+  final double gap;
+  final String unit;
+  final String message;
+
+  ConstraintViolation({
+    required this.constraintId,
+    required this.type,
+    this.nutrient,
+    required this.current,
+    required this.required,
+    required this.gap,
+    required this.unit,
+    required this.message,
+  });
+
+  factory ConstraintViolation.fromJson(Map<String, dynamic> json) {
+    return ConstraintViolation(
+      constraintId: json['constraintId'] ?? '',
+      type: json['type'] ?? '',
+      nutrient: json['nutrient'],
+      current: (json['current'] ?? 0).toDouble(),
+      required: (json['required'] ?? 0).toDouble(),
+      gap: (json['gap'] ?? 0).toDouble(),
+      unit: json['unit'] ?? '',
+      message: json['message'] ?? '',
+    );
+  }
+}
+
+class RecommendedAction {
+  final String actionType;
+  final String label;
+  final String description;
+  final Map<String, dynamic> patch;
+  final double estimatedCostDelta;
+  final double estimatedComplianceDelta;
+  final double confidence;
+
+  RecommendedAction({
+    required this.actionType,
+    required this.label,
+    required this.description,
+    required this.patch,
+    required this.estimatedCostDelta,
+    required this.estimatedComplianceDelta,
+    required this.confidence,
+  });
+
+  factory RecommendedAction.fromJson(Map<String, dynamic> json) {
+    return RecommendedAction(
+      actionType: json['actionType'] ?? '',
+      label: json['label'] ?? '',
+      description: json['description'] ?? '',
+      patch: Map<String, dynamic>.from(json['patch'] ?? {}),
+      estimatedCostDelta: (json['estimatedCostDelta'] ?? 0).toDouble(),
+      estimatedComplianceDelta: (json['estimatedComplianceDelta'] ?? 0)
+          .toDouble(),
+      confidence: (json['confidence'] ?? 0).toDouble(),
+    );
+  }
+}
+
+class InfeasibleFormulationException implements Exception {
+  final String message;
+  final String suggestion;
+  final List<ConstraintViolation> violations;
+  final List<RecommendedAction> recommendedActions;
+
+  InfeasibleFormulationException({
+    required this.message,
+    required this.suggestion,
+    required this.violations,
+    required this.recommendedActions,
+  });
+
+  @override
+  String toString() => message;
+}
+
+class PreviewResult {
+  final bool feasible;
+  final FormulationResult? bestOption;
+  final List<FormulationResult> options;
+  final double? estimatedCostDelta;
+  final double? estimatedComplianceDelta;
+
+  PreviewResult({
+    required this.feasible,
+    this.bestOption,
+    required this.options,
+    this.estimatedCostDelta,
+    this.estimatedComplianceDelta,
+  });
+
+  factory PreviewResult.fromJson(Map<String, dynamic> json) {
+    final optionsJson = json['options'] as List? ?? [];
+    final parsedOptions = optionsJson
+        .map((o) => FormulationResult.fromJson(Map<String, dynamic>.from(o)))
+        .toList();
+    final bestOptionJson = json['bestOption'];
+    return PreviewResult(
+      feasible: json['feasible'] ?? false,
+      bestOption: bestOptionJson != null
+          ? FormulationResult.fromJson(
+              Map<String, dynamic>.from(bestOptionJson),
+            )
+          : null,
+      options: parsedOptions,
+      estimatedCostDelta: json['estimatedCostDelta']?.toDouble(),
+      estimatedComplianceDelta: json['estimatedComplianceDelta']?.toDouble(),
+    );
+  }
+}
+
 /// Ingredient model
 class Ingredient {
   final String id;
@@ -66,6 +186,8 @@ class FeedStandard {
   final String stage;
   final String? pelletSize;
   final String feedCategory;
+  final String? feedType;
+  final String? fishSubtype;
   final String? poultryType;
   final int tolerance;
 
@@ -76,6 +198,8 @@ class FeedStandard {
     required this.stage,
     this.pelletSize,
     required this.feedCategory,
+    this.feedType,
+    this.fishSubtype,
     this.poultryType,
     required this.tolerance,
   });
@@ -87,7 +211,11 @@ class FeedStandard {
       brand: json['brand'] ?? '',
       stage: json['stage'] ?? '',
       pelletSize: json['pelletSize'],
-      feedCategory: json['feedCategory'] ?? 'Catfish',
+      feedCategory:
+          json['feedCategory'] ??
+          ((json['feedType'] == 'poultry') ? 'Poultry' : 'Catfish'),
+      feedType: json['feedType'],
+      fishSubtype: json['fishSubtype'],
       poultryType: json['poultryType'],
       tolerance: json['tolerance'] ?? 2,
     );
@@ -130,12 +258,14 @@ class FormulationRequest {
   final String standardId;
   final List<SelectedIngredient> selectedIngredients;
   final double overheadCost; // Milling, processing, transport
+  final Map<String, Map<String, double>>? targetOverrides;
 
   FormulationRequest({
     required this.targetWeightKg,
     required this.standardId,
     required this.selectedIngredients,
     this.overheadCost = 0,
+    this.targetOverrides,
   });
 
   Map<String, dynamic> toJson() => {
@@ -143,18 +273,32 @@ class FormulationRequest {
     'standardId': standardId,
     'selectedIngredients': selectedIngredients.map((i) => i.toJson()).toList(),
     'overheadCost': overheadCost,
+    if (targetOverrides != null) 'targetOverrides': targetOverrides,
   };
 }
 
 class SelectedIngredient {
   final String ingredientId;
   final double? customPrice;
+  final double? minInclusionPct;
+  final double? maxInclusionPct;
+  final String? alternativeIngredientId;
 
-  SelectedIngredient({required this.ingredientId, this.customPrice});
+  SelectedIngredient({
+    required this.ingredientId,
+    this.customPrice,
+    this.minInclusionPct,
+    this.maxInclusionPct,
+    this.alternativeIngredientId,
+  });
 
   Map<String, dynamic> toJson() => {
     'ingredientId': ingredientId,
     if (customPrice != null) 'customPrice': customPrice,
+    if (minInclusionPct != null) 'minInclusionPct': minInclusionPct,
+    if (maxInclusionPct != null) 'maxInclusionPct': maxInclusionPct,
+    if (alternativeIngredientId != null)
+      'alternativeIngredientId': alternativeIngredientId,
   };
 }
 
@@ -320,11 +464,16 @@ Future<List<FeedTemplate>> feedTemplates(Ref ref) async {
 /// Formulation notifier for managing the formulation flow
 @riverpod
 class FormulationNotifier extends _$FormulationNotifier {
+  FormulationRequest? _lastRequest;
+
+  FormulationRequest? get lastRequest => _lastRequest;
+
   @override
   AsyncValue<List<FormulationResult>?> build() => const AsyncData(null);
 
   Future<void> calculate(FormulationRequest request) async {
     state = const AsyncLoading();
+    _lastRequest = request;
 
     try {
       final dio = await ref.watch(dioProvider.future);
@@ -334,10 +483,25 @@ class FormulationNotifier extends _$FormulationNotifier {
       );
 
       if (response.data['status'] == 'infeasible') {
-        // Pass both message and suggestion
-        final msg = response.data['message'];
-        final suggestion = response.data['suggestion'];
-        throw Exception('$msg\n\nTip: $suggestion');
+        final msg = response.data['message'] ?? 'Formulation infeasible';
+        final suggestion = response.data['suggestion'] ?? '';
+        final violationsJson = response.data['violations'] as List? ?? [];
+        final actionsJson = response.data['recommendedActions'] as List? ?? [];
+        throw InfeasibleFormulationException(
+          message: msg,
+          suggestion: suggestion,
+          violations: violationsJson
+              .map(
+                (v) =>
+                    ConstraintViolation.fromJson(Map<String, dynamic>.from(v)),
+              )
+              .toList(),
+          recommendedActions: actionsJson
+              .map(
+                (a) => RecommendedAction.fromJson(Map<String, dynamic>.from(a)),
+              )
+              .toList(),
+        );
       }
 
       final List<dynamic> optionsJson = response.data['options'] ?? [];
@@ -380,8 +544,49 @@ class FormulationNotifier extends _$FormulationNotifier {
       }
       state = AsyncError(errorMessage, stack);
     } catch (e, stack) {
-      state = AsyncError(e.toString(), stack);
+      state = AsyncError(e, stack);
     }
+  }
+
+  Future<PreviewResult> previewFix({
+    required FormulationRequest originalRequest,
+    required RecommendedAction action,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final response = await dio.post(
+      '/formulations/preview-fix',
+      data: {
+        'originalRequest': originalRequest.toJson(),
+        'action': {'actionType': action.actionType, 'patch': action.patch},
+      },
+    );
+
+    if (response.data['status'] == 'preview_infeasible' ||
+        response.data['status'] == 'infeasible') {
+      final msg = response.data['message'] ?? 'Still infeasible';
+      final suggestion = response.data['suggestion'] ?? '';
+      final violationsJson = response.data['violations'] as List? ?? [];
+      final actionsJson = response.data['recommendedActions'] as List? ?? [];
+      throw InfeasibleFormulationException(
+        message: msg,
+        suggestion: suggestion,
+        violations: violationsJson
+            .map(
+              (v) => ConstraintViolation.fromJson(Map<String, dynamic>.from(v)),
+            )
+            .toList(),
+        recommendedActions: actionsJson
+            .map(
+              (a) => RecommendedAction.fromJson(Map<String, dynamic>.from(a)),
+            )
+            .toList(),
+      );
+    }
+
+    final previewJson = Map<String, dynamic>.from(
+      response.data['preview'] ?? {},
+    );
+    return PreviewResult.fromJson(previewJson);
   }
 
   Future<FormulationResult?> unlock(String formulationId) async {
@@ -409,7 +614,23 @@ class FormulationNotifier extends _$FormulationNotifier {
     return unlockedResult;
   }
 
+  Future<double> getUnlockFee() async {
+    try {
+      final dio = await ref.watch(dioProvider.future);
+      final response = await dio.get('/formulations/unlock-fee');
+      return (response.data['formulationFee'] ?? 10000).toDouble();
+    } catch (_) {
+      return 10000;
+    }
+  }
+
+  void usePreviewResult(PreviewResult preview) {
+    if (preview.options.isEmpty) return;
+    state = AsyncData(preview.options);
+  }
+
   void reset() {
+    _lastRequest = null;
     state = const AsyncData(null);
   }
 

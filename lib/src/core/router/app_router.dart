@@ -7,6 +7,7 @@ import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/formulation/presentation/formulation_screen.dart';
 import '../../features/formulation/presentation/quick_formulation_screen.dart';
 import '../../features/payment/presentation/wallet_screen.dart';
+import '../../features/payment/presentation/payment_callback_screen.dart';
 import '../../features/onboarding/presentation/onboarding_screen.dart';
 import '../../features/onboarding/data/onboarding_repository.dart';
 
@@ -30,6 +31,13 @@ GoRouter goRouter(Ref ref) {
       final isLoggingIn =
           matchedLocation == '/login' || matchedLocation == '/verify-otp';
       final isOnboarding = matchedLocation == '/onboarding';
+      final isPaymentCallback = matchedLocation == '/payment/callback';
+
+      // Allow payment callback to resolve independently, even if auth/onboarding
+      // state is refreshing or temporarily unavailable.
+      if (isPaymentCallback) {
+        return null;
+      }
 
       // 1. Mandatory Onboarding for first visit
       if (!hasCompletedOnboarding && !isOnboarding) {
@@ -82,6 +90,15 @@ GoRouter goRouter(Ref ref) {
       GoRoute(
         path: '/wallet',
         builder: (context, state) => const WalletScreen(),
+      ),
+      GoRoute(
+        path: '/payment/callback',
+        builder: (context, state) => PaymentCallbackScreen(
+          reference:
+              state.uri.queryParameters['reference'] ??
+              state.uri.queryParameters['trxref'],
+          status: state.uri.queryParameters['status'],
+        ),
       ),
     ],
   );

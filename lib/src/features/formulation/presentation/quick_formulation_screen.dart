@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:dio/dio.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/auth_required_view.dart';
 import '../../../shared/paywall_view.dart';
@@ -24,29 +25,25 @@ class _QuickFormulationScreenState
   double _targetWeight = 100;
   String? _selectedStandardId;
   final _formatter = NumberFormat.currency(symbol: '₦', decimalDigits: 0);
+  double _unlockFee = 10000;
 
   @override
   void initState() {
     super.initState();
-    // Initial check for user access to set reasonable default weight
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final user = ref.read(currentUserProvider).value;
-      if (user != null && !user.hasFullAccess && _targetWeight > 5) {
-        setState(() => _targetWeight = 5);
-      }
-    });
+    _loadUnlockFee();
   }
 
   Future<void> _handleUnlock(FormulationResult result) async {
     final formulationId = result.formulationId;
     if (formulationId == null) return;
+    final feeLabel = _formatter.format(_unlockFee);
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Unlock Production Mix'),
-        content: const Text(
-          'This will deduct ₦10,000 from your wallet to unlock the full production recipe.',
+        content: Text(
+          'This will deduct $feeLabel from your wallet to unlock the full production recipe.',
         ),
         actions: [
           TextButton(
@@ -91,15 +88,36 @@ class _QuickFormulationScreenState
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      final errorMsg = e.toString().contains('Insufficient balance')
-          ? 'Insufficient balance. Please top up your wallet.'
-          : 'Failed to unlock: $e';
+      String errorMsg = 'Failed to unlock formulation. Please try again.';
+      bool requiresDeposit = false;
+
+      if (e is DioException) {
+        final data = e.response?.data;
+        if (data is Map) {
+          final message = data['message']?.toString();
+          final error = data['error']?.toString();
+          errorMsg = (message != null && message.isNotEmpty)
+              ? message
+              : ((error != null && error.isNotEmpty)
+                    ? error
+                    : (e.message ?? errorMsg));
+          requiresDeposit =
+              data['requiresDeposit'] == true ||
+              (error?.toLowerCase().contains('insufficient') ?? false);
+        } else if (e.message != null && e.message!.isNotEmpty) {
+          errorMsg = e.message!;
+        }
+      } else {
+        final fallback = e.toString().replaceFirst('Exception: ', '').trim();
+        if (fallback.isNotEmpty) errorMsg = fallback;
+        requiresDeposit = fallback.toLowerCase().contains('insufficient');
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(errorMsg),
           backgroundColor: AppTheme.errorRed,
-          action: e.toString().contains('Insufficient balance')
+          action: requiresDeposit
               ? SnackBarAction(
                   label: 'Deposit',
                   textColor: Colors.white,
@@ -109,6 +127,12 @@ class _QuickFormulationScreenState
         ),
       );
     }
+  }
+
+  Future<void> _loadUnlockFee() async {
+    final fee = await ref.read(formulationProvider.notifier).getUnlockFee();
+    if (!mounted) return;
+    setState(() => _unlockFee = fee > 0 ? fee : 10000);
   }
 
   void _goBack() {
@@ -201,6 +225,7 @@ class _QuickFormulationScreenState
             ? _ResultView(
                 result: results.first,
                 formatter: _formatter,
+                unlockFeeLabel: _formatter.format(_unlockFee),
                 onReset: () {
                   ref.read(formulationProvider.notifier).reset();
                 },
@@ -352,26 +377,6 @@ class _QuickFormulationScreenState
                       color: AppTheme.grey600,
                     ),
                   ),
-                  if (!(ref.watch(currentUserProvider).value?.hasFullAccess ??
-                      false))
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryGreen.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'DEMO: MAX 5KG',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.primaryGreen,
-                        ),
-                      ),
-                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -380,15 +385,9 @@ class _QuickFormulationScreenState
                   Expanded(
                     child: Builder(
                       builder: (context) {
-                        final hasFullAccess =
-                            ref
-                                .watch(currentUserProvider)
-                                .value
-                                ?.hasFullAccess ??
-                            false;
-                        final minWeight = hasFullAccess ? 10.0 : 1.0;
-                        final maxWeight = hasFullAccess ? 1000.0 : 5.0;
-                        final divisions = hasFullAccess ? 99 : 4;
+                        const minWeight = 10.0;
+                        const maxWeight = 1000.0;
+                        const divisions = 99;
 
                         // Ensure current value is within valid range
                         double safeWeight = _targetWeight;
@@ -586,12 +585,14 @@ class _QuickFormulationScreenState
 class _ResultView extends StatelessWidget {
   final FormulationResult result;
   final NumberFormat formatter;
+  final String unlockFeeLabel;
   final VoidCallback onReset;
   final VoidCallback onUnlock;
 
   const _ResultView({
     required this.result,
     required this.formatter,
+    required this.unlockFeeLabel,
     required this.onReset,
     required this.onUnlock,
   });
@@ -699,8 +700,8 @@ class _ResultView extends StatelessWidget {
                   children: [
                     const Icon(Icons.lock_open_rounded, size: 20),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Unlock Production Mix (₦10,000)',
+                    Text(
+                      'Unlock Production Mix ($unlockFeeLabel)',
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 15,
