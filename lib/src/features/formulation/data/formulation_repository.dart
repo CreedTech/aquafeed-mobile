@@ -589,26 +589,102 @@ class FormulationNotifier extends _$FormulationNotifier {
     return PreviewResult.fromJson(previewJson);
   }
 
-  Future<FormulationResult?> unlock(String formulationId) async {
+  Future<FormulationResult?> unlock(
+    String formulationId, {
+    String? strategy,
+  }) async {
     final dio = await ref.watch(dioProvider.future);
-    final response = await dio.post('/formulations/$formulationId/unlock');
-    final unlockedResult = FormulationResult.fromJson(
-      response.data['formulation'],
+    final response = await dio.post(
+      '/formulations/$formulationId/unlock',
+      data: {
+        if (strategy != null && strategy.trim().isNotEmpty)
+          'strategy': strategy.trim(),
+      },
     );
+    final payload = response.data['formulation'] as Map<String, dynamic>? ?? {};
+    final payloadStrategy = payload['strategy']?.toString();
+    final normalizedStrategy = (payloadStrategy ?? strategy)?.trim().toUpperCase();
 
-    // Update local state if it exists
+    final payloadIngredients = payload['recipe'] ?? payload['ingredientsUsed'];
+    final parsedIngredients = payloadIngredients is List
+        ? payloadIngredients
+              .map((i) => IngredientUsed.fromJson(Map<String, dynamic>.from(i)))
+              .toList()
+        : null;
+
+    FormulationResult? unlockedResult;
     final currentResults = state.value;
     if (currentResults != null) {
-      final updatedResults = currentResults.map((r) {
-        if (r.formulationId == formulationId) {
-          // If the backend returns a partial result, we merge or replace
-          // In our case, the backend returns the full unlocked recipe
-          return unlockedResult;
-        }
-        return r;
+      FormulationResult mergeResult(FormulationResult r) {
+        final merged = FormulationResult(
+          strategy: payloadStrategy ?? r.strategy,
+          formulationId:
+              payload['formulationId']?.toString() ??
+              payload['_id']?.toString() ??
+              r.formulationId ??
+              formulationId,
+          complianceColor:
+              payload['complianceColor']?.toString() ?? r.complianceColor,
+          qualityMatch:
+              (payload['qualityMatch'] as num?)?.toDouble() ?? r.qualityMatch,
+          totalCost: (payload['totalCost'] as num?)?.toDouble() ?? r.totalCost,
+          costPerKg: (payload['costPerKg'] as num?)?.toDouble() ?? r.costPerKg,
+          actualNutrients: payload['actualNutrients'] is Map<String, dynamic>
+              ? Ingredient._parseNutrients(payload['actualNutrients'])
+              : r.actualNutrients,
+          nutrientStatuses: r.nutrientStatuses,
+          isUnlocked: true,
+          isDemo: r.isDemo,
+          effectiveWeightKg: r.effectiveWeightKg,
+          ingredientsUsed: parsedIngredients ?? r.ingredientsUsed,
+        );
+        unlockedResult = merged;
+        return merged;
+      }
+
+      bool didUpdate = false;
+      var updatedResults = currentResults.map((r) {
+        if (r.formulationId != formulationId) return r;
+        final rowStrategy = r.strategy?.trim().toUpperCase();
+        final strategyMatches =
+            normalizedStrategy == null || normalizedStrategy.isEmpty
+            ? true
+            : (rowStrategy != null && rowStrategy == normalizedStrategy);
+        if (!strategyMatches) return r;
+        didUpdate = true;
+        return mergeResult(r);
       }).toList();
+
+      // Fallback for legacy data that may not include strategy tags per option.
+      if (!didUpdate) {
+        bool patchedFirst = false;
+        updatedResults = updatedResults.map((r) {
+          if (patchedFirst || r.formulationId != formulationId) return r;
+          patchedFirst = true;
+          return mergeResult(r);
+        }).toList();
+      }
+
       state = AsyncData(updatedResults);
     }
+
+    unlockedResult ??= FormulationResult(
+      strategy: payloadStrategy,
+      formulationId:
+          payload['formulationId']?.toString() ??
+          payload['_id']?.toString() ??
+          formulationId,
+      complianceColor: payload['complianceColor']?.toString() ?? 'Blue',
+      qualityMatch: (payload['qualityMatch'] as num?)?.toDouble() ?? 0,
+      totalCost: (payload['totalCost'] as num?)?.toDouble() ?? 0,
+      costPerKg: (payload['costPerKg'] as num?)?.toDouble() ?? 0,
+      actualNutrients: payload['actualNutrients'] is Map<String, dynamic>
+          ? Ingredient._parseNutrients(payload['actualNutrients'])
+          : <String, double>{},
+      nutrientStatuses: const <NutrientStatus>[],
+      isUnlocked: true,
+      ingredientsUsed: parsedIngredients,
+    );
 
     ref.invalidate(dashboardRepositoryProvider);
     return unlockedResult;
