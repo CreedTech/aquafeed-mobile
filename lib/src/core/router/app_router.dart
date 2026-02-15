@@ -31,7 +31,9 @@ GoRouter goRouter(Ref ref) {
       final isLoggingIn =
           matchedLocation == '/login' || matchedLocation == '/verify-otp';
       final isOnboarding = matchedLocation == '/onboarding';
-      final isPaymentCallback = matchedLocation == '/payment/callback';
+      final isPaymentCallback =
+          matchedLocation == '/payment/callback' ||
+          matchedLocation == '/callback';
 
       // Allow payment callback to resolve independently, even if auth/onboarding
       // state is refreshing or temporarily unavailable.
@@ -93,6 +95,15 @@ GoRouter goRouter(Ref ref) {
       ),
       GoRoute(
         path: '/payment/callback',
+        builder: (context, state) => PaymentCallbackScreen(
+          reference:
+              state.uri.queryParameters['reference'] ??
+              state.uri.queryParameters['trxref'],
+          status: state.uri.queryParameters['status'],
+        ),
+      ),
+      GoRoute(
+        path: '/callback',
         builder: (context, state) => PaymentCallbackScreen(
           reference:
               state.uri.queryParameters['reference'] ??
