@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/widgets/custom_button.dart';
 import 'auth_controller.dart';
 
@@ -45,31 +46,11 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
 
     ref.listen<AsyncValue>(authControllerProvider, (previous, next) {
       if (next.hasError) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(next.error.toString()),
-            backgroundColor: AppTheme.error,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            margin: const EdgeInsets.all(16),
-          ),
-        );
+        AirbnbToast.showError(context, next.error.toString());
       } else if (!next.isLoading &&
           !next.hasError &&
           previous?.isLoading == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Verification Successful!'),
-            backgroundColor: AppTheme.success,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            margin: const EdgeInsets.all(16),
-          ),
-        );
+        AirbnbToast.showSuccess(context, 'Verification successful!');
         context.go('/dashboard');
       }
     });
