@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'features/payment/data/payment_repository.dart';
 
 class App extends ConsumerWidget {
   const App({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Startup recovery: reconcile unresolved payment references if any.
+    ref.watch(paymentStartupRecoveryProvider);
     final goRouter = ref.watch(goRouterProvider);
 
     return MaterialApp.router(
