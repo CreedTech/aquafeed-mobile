@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,11 +13,94 @@ import '../../formulation/data/formulation_repository.dart';
 import '../data/payment_repository.dart';
 
 /// Wallet & Billing Screen
-class WalletScreen extends ConsumerWidget {
+class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends ConsumerState<WalletScreen>
+    with WidgetsBindingObserver {
+  String? _pendingPaymentReference;
+  bool _isVerifyingPending = false;
+  Timer? _resumeVerifyTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    _resumeVerifyTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _pendingPaymentReference != null) {
+      _resumeVerifyTimer?.cancel();
+      _resumeVerifyTimer = Timer(const Duration(milliseconds: 700), () {
+        if (!mounted) return;
+        _attemptAutoVerifyPending(silent: true);
+      });
+    }
+  }
+
+  void _markPendingReference(String reference) {
+    if (!mounted) return;
+    setState(() => _pendingPaymentReference = reference);
+  }
+
+  Future<void> _attemptAutoVerifyPending({required bool silent}) async {
+    final reference = _pendingPaymentReference;
+    if (reference == null || reference.isEmpty || _isVerifyingPending) return;
+
+    _isVerifyingPending = true;
+    try {
+      final paymentService = await ref.read(paymentServiceProvider.future);
+      final result = await paymentService.verifyPayment(reference);
+
+      if (!mounted) return;
+      if (result.success) {
+        setState(() => _pendingPaymentReference = null);
+        ref.invalidate(currentUserProvider);
+        if (!silent) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.message),
+              backgroundColor: AppTheme.success,
+            ),
+          );
+        }
+      } else if (!silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.message),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted && !silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not verify payment right now.'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+    } finally {
+      _isVerifyingPending = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final userAsync = ref.watch(currentUserProvider);
     final formatter = NumberFormat.currency(symbol: '₦', decimalDigits: 0);
 
@@ -88,7 +173,7 @@ class WalletScreen extends ConsumerWidget {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () => _showTopUpSheet(context, ref),
+                        onPressed: () => _showTopUpSheet(context),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           foregroundColor: AppTheme.primary,
@@ -114,6 +199,51 @@ class WalletScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 24),
+
+              if (_pendingPaymentReference != null)
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.info.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTheme.info.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Payment Confirmation In Progress',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.black,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Ref: $_pendingPaymentReference',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.grey600,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _isVerifyingPending
+                            ? 'Verifying payment automatically...'
+                            : 'Waiting for payment callback...',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.grey600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              if (_pendingPaymentReference != null) const SizedBox(height: 20),
 
               // Access Status
               _SectionTitle(title: 'ACCESS STATUS'),
@@ -293,12 +423,12 @@ class WalletScreen extends ConsumerWidget {
     );
   }
 
-  void _showTopUpSheet(BuildContext context, WidgetRef ref) {
+  void _showTopUpSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _TopUpSheet(),
+      builder: (_) => _TopUpSheet(onCheckoutInitialized: _markPendingReference),
     );
   }
 
@@ -428,7 +558,9 @@ class _FeatureRow extends StatelessWidget {
 }
 
 class _TopUpSheet extends ConsumerStatefulWidget {
-  const _TopUpSheet();
+  final ValueChanged<String> onCheckoutInitialized;
+
+  const _TopUpSheet({required this.onCheckoutInitialized});
 
   @override
   ConsumerState<_TopUpSheet> createState() => _TopUpSheetState();
@@ -445,6 +577,7 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
     try {
       final paymentService = await ref.read(paymentServiceProvider.future);
       final paymentInit = await paymentService.initializeTopUp(_selectedAmount);
+      widget.onCheckoutInitialized(paymentInit.reference);
 
       if (!mounted) return;
       final checkoutUri = Uri.tryParse(paymentInit.authorizationUrl);
@@ -461,36 +594,16 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
         throw 'Unable to open payment checkout';
       }
 
-      final verificationResult = await _promptForVerification(
-        paymentService: paymentService,
-        reference: paymentInit.reference,
-      );
-
       if (!mounted) return;
 
-      if (verificationResult == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Payment checkout opened. You can verify this payment anytime from Wallet.',
-            ),
-          ),
-        );
-        return;
-      }
-
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(verificationResult.message),
-          backgroundColor: verificationResult.success
-              ? AppTheme.success
-              : AppTheme.error,
+        const SnackBar(
+          content: Text(
+            'Complete payment in Paystack. You will be redirected back to AquaFeed automatically.',
+          ),
         ),
       );
-
-      if (verificationResult.success) {
-        Navigator.pop(context);
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -503,99 +616,6 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  Future<PaymentVerificationResult?> _promptForVerification({
-    required PaymentService paymentService,
-    required String reference,
-  }) async {
-    return showDialog<PaymentVerificationResult?>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        bool isVerifying = false;
-        String? verificationError;
-
-        return StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Verify Payment'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Complete payment in Paystack, then tap Verify to credit your wallet.',
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Reference: $reference',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.grey600,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (verificationError != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    verificationError!,
-                    style: const TextStyle(color: AppTheme.error, fontSize: 12),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: isVerifying
-                    ? null
-                    : () => Navigator.pop(dialogContext, null),
-                child: const Text('Later'),
-              ),
-              ElevatedButton(
-                onPressed: isVerifying
-                    ? null
-                    : () async {
-                        setDialogState(() {
-                          isVerifying = true;
-                          verificationError = null;
-                        });
-
-                        final result = await paymentService.verifyPayment(
-                          reference,
-                        );
-
-                        if (!dialogContext.mounted) return;
-
-                        if (result.success) {
-                          Navigator.pop(dialogContext, result);
-                          return;
-                        }
-
-                        setDialogState(() {
-                          verificationError = result.message;
-                          isVerifying = false;
-                        });
-                      },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                ),
-                child: isVerifying
-                    ? const SizedBox(
-                        height: 16,
-                        width: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text('Verify'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   @override
