@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/widgets/custom_button.dart';
 import '../data/inventory_repository.dart';
 import '../../formulation/data/formulation_repository.dart';
@@ -202,21 +203,11 @@ class InventoryTab extends ConsumerWidget {
                       .updateStock(item.id, currentQuantity: qty);
                   if (context.mounted) {
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Stock updated'),
-                        backgroundColor: AppTheme.success,
-                      ),
-                    );
+                    AirbnbToast.showSuccess(context, 'Stock updated');
                   }
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(e.toString()),
-                        backgroundColor: AppTheme.error,
-                      ),
-                    );
+                    AirbnbToast.showError(context, e.toString());
                   }
                 }
               },
@@ -302,7 +293,7 @@ class _AddStockSheetState extends ConsumerState<_AddStockSheet> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: DropdownButtonFormField<Ingredient>(
-                value: _selectedIngredient,
+                initialValue: _selectedIngredient,
                 decoration: const InputDecoration(
                   border: InputBorder.none,
                   contentPadding: EdgeInsets.symmetric(
@@ -429,12 +420,7 @@ class _AddStockSheetState extends ConsumerState<_AddStockSheet> {
 
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Stock added'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
+        AirbnbToast.showSuccess(context, 'Stock added');
       }
     } catch (e) {
       setState(() {

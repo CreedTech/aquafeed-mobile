@@ -5,12 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/widgets/auth_required_view.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../formulation/data/formulation_repository.dart';
 import '../data/payment_repository.dart';
+import 'payment_checkout_webview_screen.dart';
 
 /// Wallet & Billing Screen
 class WalletScreen extends ConsumerStatefulWidget {
@@ -70,29 +71,14 @@ class _WalletScreenState extends ConsumerState<WalletScreen>
         setState(() => _pendingPaymentReference = null);
         ref.invalidate(currentUserProvider);
         if (!silent) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result.message),
-              backgroundColor: AppTheme.success,
-            ),
-          );
+          AirbnbToast.showSuccess(context, result.message);
         }
       } else if (!silent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result.message),
-            backgroundColor: AppTheme.error,
-          ),
-        );
+        AirbnbToast.showError(context, result.message);
       }
     } catch (_) {
       if (mounted && !silent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not verify payment right now.'),
-            backgroundColor: AppTheme.error,
-          ),
-        );
+        AirbnbToast.showError(context, 'Could not verify payment right now.');
       }
     } finally {
       _isVerifyingPending = false;
@@ -428,8 +414,24 @@ class _WalletScreenState extends ConsumerState<WalletScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _TopUpSheet(onCheckoutInitialized: _markPendingReference),
+      builder: (_) => _TopUpSheet(
+        onCheckoutInitialized: _markPendingReference,
+        onCallbackResolved: _handlePaymentCallbackResolved,
+      ),
     );
+  }
+
+  void _handlePaymentCallbackResolved({
+    required String reference,
+    required String status,
+  }) {
+    _markPendingReference(reference);
+    final callbackUri = Uri(
+      path: '/payment/callback',
+      queryParameters: {'reference': reference, 'status': status},
+    );
+    if (!mounted) return;
+    context.push(callbackUri.toString());
   }
 
   // Removed _handleGetAccess as we now use per-formula unlocking
@@ -559,8 +561,13 @@ class _FeatureRow extends StatelessWidget {
 
 class _TopUpSheet extends ConsumerStatefulWidget {
   final ValueChanged<String> onCheckoutInitialized;
+  final void Function({required String reference, required String status})
+  onCallbackResolved;
 
-  const _TopUpSheet({required this.onCheckoutInitialized});
+  const _TopUpSheet({
+    required this.onCheckoutInitialized,
+    required this.onCallbackResolved,
+  });
 
   @override
   ConsumerState<_TopUpSheet> createState() => _TopUpSheetState();
@@ -577,41 +584,52 @@ class _TopUpSheetState extends ConsumerState<_TopUpSheet> {
     try {
       final paymentService = await ref.read(paymentServiceProvider.future);
       final paymentInit = await paymentService.initializeTopUp(_selectedAmount);
+      await paymentService.rememberPendingReference(paymentInit.reference);
       widget.onCheckoutInitialized(paymentInit.reference);
 
       if (!mounted) return;
-      final checkoutUri = Uri.tryParse(paymentInit.authorizationUrl);
-      if (checkoutUri == null) {
+      if (paymentInit.authorizationUrl.trim().isEmpty) {
         throw 'Invalid Paystack checkout URL returned from server';
       }
 
-      final opened = await launchUrl(
-        checkoutUri,
-        mode: LaunchMode.inAppBrowserView,
-      );
-
-      if (!opened) {
-        throw 'Unable to open payment checkout';
-      }
-
-      if (!mounted) return;
-
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Complete payment in Paystack. You will be redirected back to AquaFeed automatically.',
+      final callbackUri = await Navigator.of(context).push<Uri>(
+        MaterialPageRoute(
+          builder: (_) => PaymentCheckoutWebViewScreen(
+            checkoutUrl: paymentInit.authorizationUrl,
           ),
         ),
       );
+
+      if (!mounted) return;
+
+      if (callbackUri != null) {
+        final status = (callbackUri.queryParameters['status'] ?? 'success')
+            .toLowerCase();
+        final reference =
+            callbackUri.queryParameters['reference'] ??
+            callbackUri.queryParameters['trxref'] ??
+            paymentInit.reference;
+
+        Navigator.pop(context);
+        widget.onCallbackResolved(reference: reference, status: status);
+        return;
+      }
+
+      final verifyResult = await paymentService.verifyPayment(
+        paymentInit.reference,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context);
+      if (verifyResult.success) {
+        ref.invalidate(currentUserProvider);
+        AirbnbToast.showSuccess(context, verifyResult.message);
+      } else {
+        AirbnbToast.showError(context, verifyResult.message);
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment failed: $e'),
-            backgroundColor: AppTheme.error,
-          ),
-        );
+        AirbnbToast.showError(context, 'Payment failed: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

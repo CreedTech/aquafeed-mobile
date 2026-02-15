@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../formulation/data/formulation_repository.dart';
 
@@ -367,11 +368,7 @@ class _UltraProfileContent extends StatelessWidget {
                 onPressed: () {
                   // TODO: Call API to update name
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Profile update coming soon!'),
-                    ),
-                  );
+                  AirbnbToast.showInfo(context, 'Profile update coming soon!');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primary,

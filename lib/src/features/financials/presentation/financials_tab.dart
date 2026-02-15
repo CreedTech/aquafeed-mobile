@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/widgets/custom_button.dart';
 import '../data/financials_repository.dart';
 import '../../../core/widgets/auth_required_view.dart';
@@ -289,12 +290,7 @@ class _FinancialsTabState extends ConsumerState<FinancialsTab>
                               );
                           if (context.mounted) {
                             Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Expense added'),
-                                backgroundColor: AppTheme.success,
-                              ),
-                            );
+                            AirbnbToast.showSuccess(context, 'Expense added');
                           }
                         } catch (e) {
                           setModalState(() {
@@ -506,12 +502,7 @@ class _FinancialsTabState extends ConsumerState<FinancialsTab>
                               );
                           if (context.mounted) {
                             Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Revenue added'),
-                                backgroundColor: AppTheme.success,
-                              ),
-                            );
+                            AirbnbToast.showSuccess(context, 'Revenue added');
                           }
                         } catch (e) {
                           setModalState(() {
@@ -548,8 +539,9 @@ class _ExpensesView extends ConsumerWidget {
         onRetry: () => ref.invalidate(expensesProvider),
       ),
       data: (expenses) {
-        if (expenses.isEmpty)
+        if (expenses.isEmpty) {
           return const _EmptyState(message: 'No expenses yet');
+        }
 
         final total = expenses.fold<double>(0, (sum, e) => sum + e.amount);
 
@@ -615,8 +607,9 @@ class _RevenuesView extends ConsumerWidget {
         onRetry: () => ref.invalidate(revenuesProvider),
       ),
       data: (revenues) {
-        if (revenues.isEmpty)
+        if (revenues.isEmpty) {
           return const _EmptyState(message: 'No revenue yet');
+        }
 
         final total = revenues.fold<double>(0, (sum, r) => sum + r.totalAmount);
 

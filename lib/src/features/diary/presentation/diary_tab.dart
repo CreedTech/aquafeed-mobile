@@ -6,6 +6,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import '../../../core/networking/dio_provider.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/widgets/custom_button.dart';
 import '../../../core/utils/error_helper.dart';
 import '../../../core/widgets/auth_required_view.dart';
@@ -309,11 +310,9 @@ class _DiaryTabState extends ConsumerState<DiaryTab> {
                               .logFeed(batch.id, amount);
                           if (context.mounted) {
                             Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Feed logged successfully'),
-                                backgroundColor: AppTheme.success,
-                              ),
+                            AirbnbToast.showSuccess(
+                              context,
+                              'Feed logged successfully',
                             );
                           }
                         } catch (e) {
@@ -483,11 +482,9 @@ class _DiaryTabState extends ConsumerState<DiaryTab> {
                               .createBatch(name, count, pondId);
                           if (context.mounted) {
                             Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Batch created successfully'),
-                                backgroundColor: AppTheme.success,
-                              ),
+                            AirbnbToast.showSuccess(
+                              context,
+                              'Batch created successfully',
                             );
                           }
                         } catch (e) {

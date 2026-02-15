@@ -240,15 +240,63 @@ class HomeTab extends ConsumerWidget {
     DashboardData data,
     NumberFormat formatter,
   ) {
+    final recentMixes = data.mixes.take(8).toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Stats Grid - 2 Combined Cards
+        const _SectionHeader(title: 'Mix Snapshot'),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: _MixOverviewCard(
+            data: data,
+            formatter: formatter,
+            onCreateMix: () => context.push('/formulation'),
+            onQuickMix: () => context.push('/quick-formulation'),
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
+        _SectionHeader(
+          title: 'Recent Mixes',
+          actionLabel: 'Open Builder',
+          onAction: () => context.push('/formulation'),
+        ),
+        const SizedBox(height: 12),
+        recentMixes.isEmpty
+            ? _EmptyState(
+                icon: Icons.science_outlined,
+                title: 'No mixes yet',
+                subtitle:
+                    'Run your first formulation to start tracking mix quality and costs.',
+                buttonLabel: 'Create Mix',
+                onTap: () => context.push('/formulation'),
+              )
+            : SizedBox(
+                height: 142,
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: recentMixes.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) => _MixCard(
+                    mix: recentMixes[index],
+                    formatter: formatter,
+                    onTap: () => context.push('/formulation'),
+                  ),
+                ),
+              ),
+
+        const SizedBox(height: 24),
+
+        const _SectionHeader(title: 'Operations Snapshot'),
+        const SizedBox(height: 12),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
             children: [
-              // Farm Card - Batches + Fish
               Expanded(
                 child: GestureDetector(
                   onTap: () =>
@@ -345,7 +393,6 @@ class HomeTab extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              // Stock Card - Items + Alerts
               Expanded(
                 child: GestureDetector(
                   onTap: () => ref
@@ -461,45 +508,6 @@ class HomeTab extends ConsumerWidget {
           ),
         ),
 
-        const SizedBox(height: 24),
-
-        // Profit/Loss Section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: _FinancialCard(data: data, formatter: formatter),
-        ),
-
-        const SizedBox(height: 24),
-
-        // Batches Section
-        _SectionHeader(
-          title: 'Your Batches',
-          actionLabel: data.ponds.isNotEmpty ? 'See all' : null,
-          onAction: () =>
-              ref.read(dashboardTabIndexProvider.notifier).goToDiary(),
-        ),
-        const SizedBox(height: 12),
-        data.ponds.isEmpty
-            ? _EmptyState(
-                icon: Icons.water_drop_outlined,
-                title: 'No batches yet',
-                subtitle: 'Start tracking your fish batches',
-                buttonLabel: 'Create Batch',
-                onTap: () =>
-                    ref.read(dashboardTabIndexProvider.notifier).goToDiary(),
-              )
-            : SizedBox(
-                height: 120,
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: data.ponds.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
-                  itemBuilder: (context, index) =>
-                      _BatchCard(pond: data.ponds[index]),
-                ),
-              ),
-
         // Alerts Section
         if (data.inventory.lowStockCount > 0 ||
             data.inventory.expiringSoonCount > 0) ...[
@@ -542,6 +550,31 @@ class HomeTab extends ConsumerWidget {
     WidgetRef ref, {
     required bool isGuest,
   }) {
+    final actions = [
+      (
+        icon: Icons.science_outlined,
+        label: 'New Mix',
+        onTap: () => context.push('/formulation'),
+      ),
+      (
+        icon: Icons.bolt_outlined,
+        label: 'Quick Mix',
+        onTap: () => context.push('/quick-formulation'),
+      ),
+      if (!isGuest)
+        (
+          icon: Icons.edit_note,
+          label: 'Log Feed',
+          onTap: () => ref.read(dashboardTabIndexProvider.notifier).goToDiary(),
+        ),
+      if (!isGuest)
+        (
+          icon: Icons.account_balance_wallet_outlined,
+          label: 'Wallet',
+          onTap: () => context.push('/wallet'),
+        ),
+    ];
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
@@ -556,28 +589,26 @@ class HomeTab extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _ActionButton(
-                  icon: Icons.science_outlined,
-                  label: 'New Mix',
-                  onTap: () => context.push('/quick-formulation'),
-                ),
-              ),
-              if (!isGuest) ...[
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _ActionButton(
-                    icon: Icons.edit_note,
-                    label: 'Log Feed',
-                    onTap: () => ref
-                        .read(dashboardTabIndexProvider.notifier)
-                        .goToDiary(),
-                  ),
-                ),
-              ],
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final tileWidth = (constraints.maxWidth - 12) / 2;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: actions
+                    .map(
+                      (action) => SizedBox(
+                        width: tileWidth,
+                        child: _ActionButton(
+                          icon: action.icon,
+                          label: action.label,
+                          onTap: action.onTap,
+                        ),
+                      ),
+                    )
+                    .toList(),
+              );
+            },
           ),
         ],
       ),
@@ -664,197 +695,240 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-class _StatCard extends StatelessWidget {
-  final String value;
-  final String label;
-  final IconData icon;
-  final bool isWarning;
-  final VoidCallback? onTap;
-  final String? subtitle;
+class _MixOverviewCard extends StatelessWidget {
+  final DashboardData data;
+  final NumberFormat formatter;
+  final VoidCallback onCreateMix;
+  final VoidCallback onQuickMix;
 
-  const _StatCard({
-    required this.value,
-    required this.label,
-    required this.icon,
-    this.isWarning = false,
-    this.onTap,
-    this.subtitle,
+  const _MixOverviewCard({
+    required this.data,
+    required this.formatter,
+    required this.onCreateMix,
+    required this.onQuickMix,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isWarning
-              ? AppTheme.warning.withValues(alpha: 0.1)
-              : AppTheme.grey100,
-          borderRadius: BorderRadius.circular(20),
-          border: isWarning
-              ? Border.all(color: AppTheme.warning.withValues(alpha: 0.3))
-              : null,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: isWarning ? AppTheme.warning : AppTheme.grey400,
-                ),
-                if (onTap != null)
-                  Icon(Icons.chevron_right, size: 18, color: AppTheme.grey400),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: isWarning ? AppTheme.warning : AppTheme.black,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(fontSize: 12, color: AppTheme.grey600),
-            ),
-            if (subtitle != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                subtitle!,
-                style: TextStyle(fontSize: 10, color: AppTheme.grey400),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FinancialCard extends StatelessWidget {
-  final DashboardData data;
-  final NumberFormat formatter;
-
-  const _FinancialCard({required this.data, required this.formatter});
-
-  @override
-  Widget build(BuildContext context) {
-    final isProfit = data.financials.profit >= 0;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: AppTheme.black,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                isProfit ? 'Net Profit' : 'Net Loss',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.white.withValues(alpha: 0.6),
-                ),
+              const Icon(
+                Icons.analytics_outlined,
+                color: Colors.white,
+                size: 20,
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: isProfit ? AppTheme.success : AppTheme.error,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '${data.financials.profitMargin.toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
+              const SizedBox(width: 8),
+              Text(
+                'Formulation Intelligence',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            formatter.format(data.financials.profit.abs()),
-            style: const TextStyle(
-              fontSize: 32,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Revenue',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: 0.5),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      formatter.format(data.financials.totalRevenue),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
+                child: _mixMetric(
+                  value: data.totalMixes.toString(),
+                  label: 'Total mixes',
                 ),
               ),
-              Container(
-                width: 1,
-                height: 30,
-                color: Colors.white.withValues(alpha: 0.2),
-              ),
-              const SizedBox(width: 16),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Expenses',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: 0.5),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      formatter.format(data.financials.totalExpenses),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
+                child: _mixMetric(
+                  value: data.unlockedMixes.toString(),
+                  label: 'Unlocked',
+                ),
+              ),
+              Expanded(
+                child: _mixMetric(
+                  value: '${data.averageQualityMatch.toStringAsFixed(0)}%',
+                  label: 'Avg quality',
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onCreateMix,
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.35),
+                    ),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.science_outlined, size: 18),
+                  label: const Text('New Mix'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: onQuickMix,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppTheme.black,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.bolt_outlined, size: 18),
+                  label: const Text('Quick Mix'),
+                ),
+              ),
+            ],
+          ),
+          if (data.mixes.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Latest avg cost: ${formatter.format(data.mixes.take(5).fold<double>(0, (sum, mix) => sum + mix.totalCost) / data.mixes.take(5).length)}',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.65),
+                fontSize: 11,
+              ),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  Widget _mixMetric({required String value, required String label}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.58),
+            fontSize: 11,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MixCard extends StatelessWidget {
+  final MixSummary mix;
+  final NumberFormat formatter;
+  final VoidCallback onTap;
+
+  const _MixCard({
+    required this.mix,
+    required this.formatter,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _complianceColor(mix.complianceColor);
+    final statusText = mix.isUnlocked ? 'Unlocked' : 'Preview';
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 210,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.grey100,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  mix.complianceColor,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  statusText,
+                  style: TextStyle(fontSize: 11, color: AppTheme.grey400),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              mix.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppTheme.black,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              mix.standardName ?? 'Custom standard',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+            ),
+            const Spacer(),
+            Text(
+              formatter.format(mix.totalCost),
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: AppTheme.black,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Quality ${mix.qualityMatch.toStringAsFixed(0)}% • ₦${mix.costPerKg.toStringAsFixed(0)}/kg',
+              style: TextStyle(fontSize: 11, color: AppTheme.grey400),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _complianceColor(String value) {
+    final normalized = value.toLowerCase();
+    if (normalized == 'green') return AppTheme.success;
+    if (normalized == 'blue') return AppTheme.primary;
+    return AppTheme.warning;
   }
 }
 
@@ -896,72 +970,6 @@ class _SectionHeader extends StatelessWidget {
                 ),
               ),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _BatchCard extends StatelessWidget {
-  final PondSummary pond;
-
-  const _BatchCard({required this.pond});
-
-  @override
-  Widget build(BuildContext context) {
-    final statusColor = pond.status == 'Healthy'
-        ? AppTheme.success
-        : pond.status == 'Attention'
-        ? AppTheme.warning
-        : AppTheme.grey400;
-
-    return Container(
-      width: 160,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.grey100,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: statusColor,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                pond.status,
-                style: TextStyle(fontSize: 11, color: AppTheme.grey600),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            pond.name,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppTheme.black,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          Text(
-            pond.species,
-            style: TextStyle(fontSize: 12, color: AppTheme.grey600),
-          ),
-          const Spacer(),
-          Text(
-            '${NumberFormat.compact().format(pond.fishCount)} fish • FCR ${pond.fcr.toStringAsFixed(2)}',
-            style: TextStyle(fontSize: 11, color: AppTheme.grey400),
-          ),
         ],
       ),
     );
