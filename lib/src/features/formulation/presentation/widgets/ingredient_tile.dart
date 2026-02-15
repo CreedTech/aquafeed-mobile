@@ -6,6 +6,7 @@ import '../../data/formulation_repository.dart';
 class IngredientTile extends StatelessWidget {
   final Ingredient ingredient;
   final bool isSelected;
+  final bool compact;
   final double? customPrice;
   final double? minInclusionPct;
   final double? maxInclusionPct;
@@ -17,6 +18,7 @@ class IngredientTile extends StatelessWidget {
     super.key,
     required this.ingredient,
     required this.isSelected,
+    this.compact = false,
     this.customPrice,
     this.minInclusionPct,
     this.maxInclusionPct,
@@ -42,7 +44,10 @@ class IngredientTile extends StatelessWidget {
         onTap: onToggle,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 12 : 14,
+            vertical: compact ? 10 : 12,
+          ),
           decoration: BoxDecoration(
             color: isSelected
                 ? AppTheme.primaryGreen.withValues(alpha: 0.08)
@@ -116,51 +121,85 @@ class IngredientTile extends StatelessWidget {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        _buildMetaBadge(
-                          icon: Icons.category_outlined,
-                          text: categoryLabel,
+                    if (compact) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        '$categoryLabel • ₦${price.toStringAsFixed(0)}/${ingredient.unit}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: hasCustomPrice
+                              ? AppTheme.primaryGreen
+                              : AppTheme.grey600,
+                          fontWeight: FontWeight.w600,
                         ),
-                        _buildMetaBadge(
-                          icon: Icons.payments_outlined,
-                          text:
-                              '₦${price.toStringAsFixed(0)}/${ingredient.unit}',
-                          highlight: hasCustomPrice,
-                        ),
-                        if (hasCustomPrice)
-                          _buildMetaBadge(
-                            icon: Icons.auto_fix_high_rounded,
-                            text: 'Custom',
-                            highlight: true,
-                          ),
-                      ],
-                    ),
-                    if (isSelected || hasLimits) ...[
+                      ),
+                    ] else ...[
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
                         children: [
                           _buildMetaBadge(
-                            icon: Icons.fitness_center_outlined,
-                            text: 'CP ${protein.toStringAsFixed(1)}%',
-                            highlight: protein > 40,
+                            icon: Icons.category_outlined,
+                            text: categoryLabel,
                           ),
                           _buildMetaBadge(
-                            icon: Icons.bolt_outlined,
-                            text: 'ME ${energy.toStringAsFixed(0)}',
+                            icon: Icons.payments_outlined,
+                            text:
+                                '₦${price.toStringAsFixed(0)}/${ingredient.unit}',
+                            highlight: hasCustomPrice,
                           ),
+                          if (hasCustomPrice)
+                            _buildMetaBadge(
+                              icon: Icons.auto_fix_high_rounded,
+                              text: 'Custom',
+                              highlight: true,
+                            ),
                         ],
                       ),
+                      if (isSelected || hasLimits) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _buildMetaBadge(
+                              icon: Icons.fitness_center_outlined,
+                              text: 'CP ${protein.toStringAsFixed(1)}%',
+                              highlight: protein > 40,
+                            ),
+                            _buildMetaBadge(
+                              icon: Icons.bolt_outlined,
+                              text: 'ME ${energy.toStringAsFixed(0)}',
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (hasLimits) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'Limits: ${minInclusionPct?.toStringAsFixed(1) ?? '-'}% min, ${maxInclusionPct?.toStringAsFixed(1) ?? '-'}% max',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.grey600,
+                          ),
+                        ),
+                      ],
                     ],
-                    if (hasLimits) ...[
-                      const SizedBox(height: 6),
+                    if (compact && (isSelected || hasLimits)) ...[
+                      const SizedBox(height: 4),
                       Text(
-                        'Limits: ${minInclusionPct?.toStringAsFixed(1) ?? '-'}% min, ${maxInclusionPct?.toStringAsFixed(1) ?? '-'}% max',
+                        'CP ${protein.toStringAsFixed(1)}% • ME ${energy.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.grey600,
+                        ),
+                      ),
+                    ],
+                    if (compact && hasLimits) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Min ${minInclusionPct?.toStringAsFixed(1) ?? '-'}% / Max ${maxInclusionPct?.toStringAsFixed(1) ?? '-'}%',
                         style: const TextStyle(
                           fontSize: 11,
                           color: AppTheme.grey600,
@@ -184,9 +223,9 @@ class IngredientTile extends StatelessWidget {
                     color: AppTheme.grey600,
                   ),
                   tooltip: 'Edit price and limits',
-                  constraints: const BoxConstraints(
-                    minWidth: 38,
-                    minHeight: 38,
+                  constraints: BoxConstraints(
+                    minWidth: compact ? 34 : 38,
+                    minHeight: compact ? 34 : 38,
                   ),
                   splashRadius: 20,
                 ),
@@ -347,15 +386,8 @@ class IngredientTile extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryGreen,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
                 ),
-                child: const Text(
-                  'Update',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
+                child: const Text('Apply'),
               ),
             ),
           ],

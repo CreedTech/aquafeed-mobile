@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,8 +6,11 @@ import 'package:intl/intl.dart';
 import 'package:dio/dio.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/auth_required_view.dart';
+import '../../../core/widgets/airbnb_toast.dart';
 import '../../../shared/paywall_view.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../payment/data/payment_repository.dart';
+import '../../payment/presentation/payment_checkout_webview_screen.dart';
 import '../data/formulation_repository.dart';
 import 'widgets/aura_loader.dart';
 import 'widgets/detailed_result_view.dart';
@@ -35,6 +39,7 @@ class _QuickFormulationScreenState
 
   Future<void> _handleUnlock(FormulationResult result) async {
     final formulationId = result.formulationId;
+    final strategy = result.strategy;
     if (formulationId == null) return;
     final feeLabel = _formatter.format(_unlockFee);
 
@@ -64,67 +69,309 @@ class _QuickFormulationScreenState
 
     if (confirm != true) return;
 
+    await _attemptUnlock(
+      formulationId,
+      strategy: strategy,
+      allowTopUpFallback: true,
+    );
+  }
+
+  Future<void> _attemptUnlock(
+    String formulationId, {
+    required String? strategy,
+    required bool allowTopUpFallback,
+  }) async {
     try {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Processing payment...')));
+      AirbnbToast.showInfo(context, 'Unlocking production mix...');
 
       final unlockedResult = await ref
           .read(formulationProvider.notifier)
-          .unlock(formulationId);
+          .unlock(formulationId, strategy: strategy);
 
-      if (unlockedResult != null && mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Formulation unlocked successfully!'),
-            backgroundColor: AppTheme.primaryGreen,
-          ),
+      if (!mounted) return;
+      if (unlockedResult != null) {
+        AirbnbToast.showSuccess(
+          context,
+          'Production mix unlocked successfully.',
         );
-        // Removed ref.invalidate to keep the screen open
-        ref.invalidate(currentUserProvider);
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      String errorMsg = 'Failed to unlock formulation. Please try again.';
-      bool requiresDeposit = false;
+      final parsed = _parseUnlockError(e);
 
-      if (e is DioException) {
-        final data = e.response?.data;
-        if (data is Map) {
-          final message = data['message']?.toString();
-          final error = data['error']?.toString();
-          errorMsg = (message != null && message.isNotEmpty)
-              ? message
-              : ((error != null && error.isNotEmpty)
-                    ? error
-                    : (e.message ?? errorMsg));
-          requiresDeposit =
-              data['requiresDeposit'] == true ||
-              (error?.toLowerCase().contains('insufficient') ?? false);
-        } else if (e.message != null && e.message!.isNotEmpty) {
-          errorMsg = e.message!;
-        }
-      } else {
-        final fallback = e.toString().replaceFirst('Exception: ', '').trim();
-        if (fallback.isNotEmpty) errorMsg = fallback;
-        requiresDeposit = fallback.toLowerCase().contains('insufficient');
+      if (parsed.requiresDeposit && allowTopUpFallback) {
+        AirbnbToast.showWarning(
+          context,
+          parsed.message,
+          actionLabel: 'Top up now',
+          onAction: () {
+            unawaited(
+              _showTopUpForUnlockAndRetry(
+                formulationId: formulationId,
+                strategy: strategy,
+                requiredAmount: parsed.requiredAmount,
+              ),
+            );
+          },
+        );
+        return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMsg),
-          backgroundColor: AppTheme.errorRed,
-          action: requiresDeposit
-              ? SnackBarAction(
-                  label: 'Deposit',
-                  textColor: Colors.white,
-                  onPressed: () => context.push('/wallet'),
-                )
-              : null,
+      AirbnbToast.showError(context, parsed.message);
+    }
+  }
+
+  ({String message, bool requiresDeposit, double requiredAmount})
+  _parseUnlockError(Object error) {
+    String message = 'Failed to unlock formulation. Please try again.';
+    bool requiresDeposit = false;
+    double requiredAmount = _unlockFee;
+
+    if (error is DioException) {
+      final data = error.response?.data;
+      if (data is Map) {
+        final backendMessage = data['message']?.toString();
+        final backendError = data['error']?.toString();
+        if (backendMessage != null && backendMessage.isNotEmpty) {
+          message = backendMessage;
+        } else if (backendError != null && backendError.isNotEmpty) {
+          message = backendError;
+        } else if (error.message != null && error.message!.isNotEmpty) {
+          message = error.message!;
+        }
+
+        requiresDeposit =
+            data['requiresDeposit'] == true ||
+            (backendError?.toLowerCase().contains('insufficient') ?? false) ||
+            (backendMessage?.toLowerCase().contains('insufficient') ?? false);
+        requiredAmount =
+            (data['requiredAmount'] as num?)?.toDouble() ?? _unlockFee;
+      } else if (error.message != null && error.message!.isNotEmpty) {
+        message = error.message!;
+      }
+    } else {
+      final fallback = error.toString().replaceFirst('Exception: ', '').trim();
+      if (fallback.isNotEmpty) {
+        message = fallback;
+        requiresDeposit = fallback.toLowerCase().contains('insufficient');
+      }
+    }
+
+    return (
+      message: message,
+      requiresDeposit: requiresDeposit,
+      requiredAmount: requiredAmount,
+    );
+  }
+
+  int _recommendedTopUpAmount(double requiredAmount) {
+    final required = requiredAmount <= 0 ? _unlockFee : requiredAmount;
+    final buffered = (required * 1.2).ceil();
+    if (buffered <= 5000) return 5000;
+    if (buffered <= 10000) return 10000;
+    return ((buffered + 999) ~/ 1000) * 1000;
+  }
+
+  String _normalizePaymentStatus(String? rawStatus) {
+    final value = (rawStatus ?? '').trim().toLowerCase();
+    if (value.isEmpty) return 'success';
+    return value;
+  }
+
+  bool _isRetryablePaymentMessage(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('not successful') ||
+        normalized.contains('verification failed') ||
+        normalized.contains('unable to verify') ||
+        normalized.contains('timeout') ||
+        normalized.contains('pending') ||
+        normalized.contains('processing');
+  }
+
+  bool _isTerminalPaymentMessage(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('does not belong') ||
+        normalized.contains('missing payment reference') ||
+        normalized.contains('unsupported payment currency') ||
+        normalized.contains('invalid payment amount') ||
+        normalized.contains('unable to determine payment owner');
+  }
+
+  Future<void> _showTopUpForUnlockAndRetry({
+    required String formulationId,
+    required String? strategy,
+    required double requiredAmount,
+  }) async {
+    if (!mounted) return;
+
+    final suggested = _recommendedTopUpAmount(requiredAmount);
+    final presets = <int>{5000, 10000, 20000, suggested}.toList()..sort();
+
+    final selectedAmount = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Top Up to Unlock',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Add funds now and we will unlock this mix automatically.',
+                  style: TextStyle(color: AppTheme.grey600, fontSize: 13),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: presets
+                      .map(
+                        (amount) => ChoiceChip(
+                          selected: amount == suggested,
+                          label: Text(_formatter.format(amount)),
+                          onSelected: (_) => Navigator.pop(context, amount),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selectedAmount == null) return;
+    await _runInlineTopUpForUnlock(
+      formulationId: formulationId,
+      strategy: strategy,
+      topUpAmount: selectedAmount,
+    );
+  }
+
+  Future<void> _runInlineTopUpForUnlock({
+    required String formulationId,
+    required String? strategy,
+    required int topUpAmount,
+  }) async {
+    try {
+      final paymentService = await ref.read(paymentServiceProvider.future);
+      if (!mounted) return;
+
+      AirbnbToast.showInfo(
+        context,
+        'Opening secure checkout for ${_formatter.format(topUpAmount)}...',
+      );
+
+      final init = await paymentService.initializeTopUp(topUpAmount);
+      await paymentService.rememberPendingReference(init.reference);
+
+      if (!mounted) return;
+      if (init.authorizationUrl.trim().isEmpty) {
+        AirbnbToast.showError(
+          context,
+          'Invalid checkout link returned by server. Please try again.',
+        );
+        return;
+      }
+
+      final callbackUri = await Navigator.of(context).push<Uri>(
+        MaterialPageRoute(
+          builder: (_) =>
+              PaymentCheckoutWebViewScreen(checkoutUrl: init.authorizationUrl),
         ),
+      );
+
+      if (!mounted) return;
+
+      var status = 'pending';
+      var reference = init.reference;
+      if (callbackUri != null) {
+        status = _normalizePaymentStatus(callbackUri.queryParameters['status']);
+        reference =
+            callbackUri.queryParameters['reference'] ??
+            callbackUri.queryParameters['trxref'] ??
+            init.reference;
+      }
+
+      if (status == 'failed' ||
+          status == 'abandoned' ||
+          status == 'cancelled' ||
+          status == 'error') {
+        AirbnbToast.showError(context, 'Payment was not completed.');
+        return;
+      }
+
+      PaymentVerificationResult? verificationResult;
+      const retryDelays = <Duration>[
+        Duration(milliseconds: 0),
+        Duration(milliseconds: 1000),
+        Duration(milliseconds: 2000),
+        Duration(milliseconds: 3000),
+        Duration(milliseconds: 4500),
+      ];
+
+      for (var attempt = 0; attempt < retryDelays.length; attempt++) {
+        if (retryDelays[attempt] > Duration.zero) {
+          await Future<void>.delayed(retryDelays[attempt]);
+        }
+        verificationResult = await paymentService.verifyPayment(reference);
+        if (verificationResult.success) break;
+        if (_isTerminalPaymentMessage(verificationResult.message)) break;
+        if (!_isRetryablePaymentMessage(verificationResult.message)) break;
+      }
+
+      if (!mounted) return;
+      if (verificationResult == null) {
+        AirbnbToast.showWarning(
+          context,
+          'Payment confirmation is pending. Please try unlock again shortly.',
+        );
+        return;
+      }
+
+      if (!verificationResult.success) {
+        if (_isRetryablePaymentMessage(verificationResult.message)) {
+          AirbnbToast.showWarning(
+            context,
+            'Payment is processing. Wallet will update automatically.',
+          );
+        } else {
+          AirbnbToast.showError(context, verificationResult.message);
+        }
+        return;
+      }
+
+      AirbnbToast.showSuccess(context, 'Wallet funded. Unlocking your mix...');
+      await _attemptUnlock(
+        formulationId,
+        strategy: strategy,
+        allowTopUpFallback: false,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      AirbnbToast.showError(
+        context,
+        'Could not complete payment right now. Please try again.',
       );
     }
   }
@@ -532,6 +779,50 @@ class _QuickFormulationScreenState
   }
 
   void _calculate(List<Ingredient> allIngredients, FeedTemplate template) {
+    final selectedStandardId = _selectedStandardId;
+    if (selectedStandardId == null) return;
+
+    final standards = ref.read(feedStandardsProvider).value ?? const <FeedStandard>[];
+    FeedStandard? selectedStandard;
+    for (final standard in standards) {
+      if (standard.id == selectedStandardId) {
+        selectedStandard = standard;
+        break;
+      }
+    }
+    if (selectedStandard == null) {
+      AirbnbToast.showWarning(
+        context,
+        'Selected standard is no longer available. Please choose another standard.',
+      );
+      return;
+    }
+
+    final templateIsPoultry = template.feedCategory.toLowerCase() == 'poultry';
+    final standardIsPoultry =
+        selectedStandard.feedCategory.toLowerCase() == 'poultry' ||
+        (selectedStandard.feedType ?? '').toLowerCase() == 'poultry';
+
+    if (templateIsPoultry != standardIsPoultry) {
+      AirbnbToast.showWarning(
+        context,
+        'Selected template and standard do not match. Please pick a matching standard.',
+      );
+      return;
+    }
+
+    if (templateIsPoultry &&
+        template.poultryType != null &&
+        selectedStandard.poultryType != null &&
+        template.poultryType!.toLowerCase() !=
+            selectedStandard.poultryType!.toLowerCase()) {
+      AirbnbToast.showWarning(
+        context,
+        'Template poultry type does not match the selected standard.',
+      );
+      return;
+    }
+
     final selected = <SelectedIngredient>[];
 
     for (final name in template.ingredientNames) {
@@ -560,12 +851,9 @@ class _QuickFormulationScreenState
     }
 
     if (selected.length < 5) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Not enough ingredients matched. Try manual selection.',
-          ),
-        ),
+      AirbnbToast.showWarning(
+        context,
+        'Not enough ingredients matched. Try manual selection.',
       );
       return;
     }
@@ -575,7 +863,7 @@ class _QuickFormulationScreenState
         .calculate(
           FormulationRequest(
             targetWeightKg: _targetWeight,
-            standardId: _selectedStandardId!,
+            standardId: selectedStandardId,
             selectedIngredients: selected,
           ),
         );
