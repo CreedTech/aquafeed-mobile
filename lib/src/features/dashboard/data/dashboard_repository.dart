@@ -13,12 +13,14 @@ class DashboardData {
   final InventorySummary inventory;
   final FinancialSummary financials;
   final List<MixSummary> mixes;
+  final MixMetrics mixMetrics;
 
   DashboardData({
     required this.ponds,
     required this.inventory,
     required this.financials,
     required this.mixes,
+    required this.mixMetrics,
   });
 
   /// Empty dashboard for when user is not authenticated
@@ -27,19 +29,109 @@ class DashboardData {
     inventory: InventorySummary.empty(),
     financials: FinancialSummary.empty(),
     mixes: [],
+    mixMetrics: MixMetrics.empty(),
   );
 
-  int get totalMixes => mixes.length;
+  int get totalMixes =>
+      mixMetrics.total > 0 ? mixMetrics.total : mixes.length;
 
-  int get unlockedMixes => mixes.where((mix) => mix.isUnlocked).length;
+  int get unlockedMixes =>
+      mixMetrics.total > 0
+          ? mixMetrics.unlocked
+          : mixes.where((mix) => mix.isUnlocked).length;
 
   int get compliantMixes =>
-      mixes.where((mix) => mix.complianceColor.toLowerCase() == 'green').length;
+      mixMetrics.total > 0
+          ? mixMetrics.compliant
+          : mixes
+                .where((mix) => mix.complianceColor.toLowerCase() == 'green')
+                .length;
 
   double get averageQualityMatch {
+    if (mixMetrics.total > 0) {
+      return mixMetrics.averageQualityMatch;
+    }
     if (mixes.isEmpty) return 0;
     final total = mixes.fold<double>(0, (sum, mix) => sum + mix.qualityMatch);
     return total / mixes.length;
+  }
+}
+
+class MixMetrics {
+  final int total;
+  final int unlocked;
+  final int compliant;
+  final double averageQualityMatch;
+  final double totalCost;
+  final int fishMixes;
+  final int poultryMixes;
+
+  MixMetrics({
+    required this.total,
+    required this.unlocked,
+    required this.compliant,
+    required this.averageQualityMatch,
+    required this.totalCost,
+    required this.fishMixes,
+    required this.poultryMixes,
+  });
+
+  factory MixMetrics.empty() => MixMetrics(
+    total: 0,
+    unlocked: 0,
+    compliant: 0,
+    averageQualityMatch: 0,
+    totalCost: 0,
+    fishMixes: 0,
+    poultryMixes: 0,
+  );
+
+  factory MixMetrics.fromSummaryJson(Map<String, dynamic> json) {
+    final feedTypeCounts = json['feedTypeCounts'];
+    final feedTypeMap = feedTypeCounts is Map
+        ? Map<String, dynamic>.from(feedTypeCounts)
+        : const <String, dynamic>{};
+
+    int toInt(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '') ?? 0;
+    }
+
+    return MixMetrics(
+      total: toInt(json['total']),
+      unlocked: toInt(json['unlocked']),
+      compliant: toInt(json['compliant']),
+      averageQualityMatch: (json['avgQualityMatch'] ?? 0).toDouble(),
+      totalCost: (json['totalCost'] ?? 0).toDouble(),
+      fishMixes: toInt(feedTypeMap['fish']),
+      poultryMixes: toInt(feedTypeMap['poultry']),
+    );
+  }
+
+  factory MixMetrics.fromMixes(List<MixSummary> mixes) {
+    if (mixes.isEmpty) return MixMetrics.empty();
+    var unlocked = 0;
+    var compliant = 0;
+    var totalCost = 0.0;
+    var totalQuality = 0.0;
+
+    for (final mix in mixes) {
+      if (mix.isUnlocked) unlocked += 1;
+      if (mix.complianceColor.toLowerCase() == 'green') compliant += 1;
+      totalCost += mix.totalCost;
+      totalQuality += mix.qualityMatch;
+    }
+
+    return MixMetrics(
+      total: mixes.length,
+      unlocked: unlocked,
+      compliant: compliant,
+      averageQualityMatch: totalQuality / mixes.length,
+      totalCost: totalCost,
+      fishMixes: 0,
+      poultryMixes: 0,
+    );
   }
 }
 
@@ -249,11 +341,23 @@ class DashboardRepository extends _$DashboardRepository {
 
       // Formulations are additive for dashboard UX. Don't fail whole
       // dashboard if this endpoint has a transient issue.
-      Response<dynamic>? formulationsResponse;
+      Response<dynamic>? formulationsSummaryResponse;
+      Response<dynamic>? formulationsListResponse;
       try {
-        formulationsResponse = await dio.get('/formulations?limit=20');
+        formulationsSummaryResponse = await dio.get(
+          '/formulations/summary?recentLimit=8',
+        );
       } catch (_) {
-        formulationsResponse = null;
+        formulationsSummaryResponse = null;
+      }
+
+      // Backward-compatible fallback for older backend deployments.
+      if (formulationsSummaryResponse == null) {
+        try {
+          formulationsListResponse = await dio.get('/formulations?limit=20');
+        } catch (_) {
+          formulationsListResponse = null;
+        }
       }
 
       // Parse Batches -> Ponds
@@ -278,21 +382,35 @@ class DashboardRepository extends _$DashboardRepository {
         metricsData is Map<String, dynamic> ? metricsData : {},
       );
 
-      final formulationsList =
-          (formulationsResponse?.data is Map
-                  ? (formulationsResponse!.data['formulations'] as List? ?? [])
+      final summaryPayload = formulationsSummaryResponse?.data;
+      final summaryMap = summaryPayload is Map
+          ? Map<String, dynamic>.from(summaryPayload)
+          : null;
+      final recentMixesRaw =
+          (summaryMap?['recentMixes'] as List?)?.whereType<Map>() ?? const [];
+      final fallbackMixesRaw =
+          (formulationsListResponse?.data is Map
+                  ? (formulationsListResponse!.data['formulations'] as List? ??
+                        [])
                   : const [])
-              .whereType<Map>()
-              .map(
-                (item) => MixSummary.fromJson(Map<String, dynamic>.from(item)),
-              )
-              .toList();
+              .whereType<Map>();
+
+      final mixesRaw = recentMixesRaw.isNotEmpty ? recentMixesRaw : fallbackMixesRaw;
+      final formulationsList = mixesRaw
+          .map((item) => MixSummary.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+
+      final summaryBlock = summaryMap?['summary'];
+      final mixMetrics = summaryBlock is Map
+          ? MixMetrics.fromSummaryJson(Map<String, dynamic>.from(summaryBlock))
+          : MixMetrics.fromMixes(formulationsList);
 
       return DashboardData(
         ponds: ponds,
         inventory: inventory,
         financials: financials,
         mixes: formulationsList,
+        mixMetrics: mixMetrics,
       );
     } on DioException catch (e) {
       throw ErrorHelper.getUserMessage(e);

@@ -98,6 +98,19 @@ class AuthService {
       return null;
     }
   }
+
+  Future<User> updateProfile({String? name, String? phone}) async {
+    try {
+      final payload = <String, dynamic>{};
+      if (name != null) payload['name'] = name;
+      if (phone != null) payload['phone'] = phone;
+
+      final response = await _dio.patch('/auth/me', data: payload);
+      return User.fromJson(response.data['user']);
+    } on DioException catch (e) {
+      throw ErrorHelper.getUserMessage(e);
+    }
+  }
 }
 
 /// Provides the AuthService instance

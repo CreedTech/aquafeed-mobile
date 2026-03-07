@@ -1210,7 +1210,27 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
                       (_selectedCategory != 'Poultry' ||
                           s.poultryType == _selectedPoultryType),
                 )
-                .toList();
+                .toList()
+              ..sort((a, b) {
+                const poultryOrder = {
+                  'POULTRY_BROILER_STARTER': 1,
+                  'POULTRY_BROILER_GROWER': 2,
+                  'POULTRY_BROILER_FINISHER': 3,
+                  'POULTRY_LAYER_STARTER': 1,
+                  'POULTRY_LAYER_GROWER': 2,
+                  'POULTRY_LAYER_PRE_LAY': 3,
+                  'POULTRY_LAYER_PHASE_1': 4,
+                  'POULTRY_LAYER_PHASE_2': 5,
+                  'POULTRY_LAYER_PHASE_3': 6,
+                };
+
+                final aCode = a.stageCode ?? '';
+                final bCode = b.stageCode ?? '';
+                final aRank = poultryOrder[aCode] ?? 999;
+                final bRank = poultryOrder[bCode] ?? 999;
+                if (aRank != bRank) return aRank.compareTo(bRank);
+                return a.stage.toLowerCase().compareTo(b.stage.toLowerCase());
+              });
 
             if (filtered.isEmpty) {
               return Container(

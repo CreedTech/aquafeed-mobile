@@ -184,6 +184,8 @@ class FeedStandard {
   final String name;
   final String brand;
   final String stage;
+  final String? stageCode;
+  final String? ageGuidance;
   final String? pelletSize;
   final String feedCategory;
   final String? feedType;
@@ -196,6 +198,8 @@ class FeedStandard {
     required this.name,
     required this.brand,
     required this.stage,
+    this.stageCode,
+    this.ageGuidance,
     this.pelletSize,
     required this.feedCategory,
     this.feedType,
@@ -210,6 +214,8 @@ class FeedStandard {
       name: json['name'] ?? '',
       brand: json['brand'] ?? '',
       stage: json['stage'] ?? '',
+      stageCode: json['stageCode'],
+      ageGuidance: json['ageGuidance'],
       pelletSize: json['pelletSize'],
       feedCategory:
           json['feedCategory'] ??

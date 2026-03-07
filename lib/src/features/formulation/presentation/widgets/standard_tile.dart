@@ -17,6 +17,8 @@ class StandardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final stageLabel = standard.stage;
+    final subtitleLabel = standard.pelletSize ?? standard.brand;
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -67,13 +69,25 @@ class StandardTile extends StatelessWidget {
                       color: AppTheme.black,
                     ),
                   ),
+                  const SizedBox(height: 2),
                   Text(
-                    '${standard.brand} · ${standard.pelletSize ?? standard.stage}',
+                    '$stageLabel · $subtitleLabel',
                     style: const TextStyle(
                       fontSize: 13,
                       color: AppTheme.grey600,
                     ),
                   ),
+                  if (standard.ageGuidance != null &&
+                      standard.ageGuidance!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      standard.ageGuidance!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.grey400,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -5,6 +5,7 @@ import 'package:iconsax_flutter/iconsax_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/widgets/custom_button.dart';
+import '../data/auth_repository.dart';
 import 'auth_controller.dart';
 
 /// OTP Verification Screen - Clean, focused design with dark mode
@@ -19,13 +20,32 @@ class VerifyOtpScreen extends ConsumerStatefulWidget {
 
 class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
   final _otpController = TextEditingController();
+  bool _isVerifying = false;
+  bool _isResending = false;
 
   void _verify() async {
     final otp = _otpController.text.trim();
     if (otp.length < 6) return;
-    await ref
-        .read(authControllerProvider.notifier)
-        .verifyOtp(widget.email, otp);
+    _isVerifying = true;
+    await ref.read(authControllerProvider.notifier).verifyOtp(widget.email, otp);
+  }
+
+  Future<void> _resendCode() async {
+    if (_isResending) return;
+    setState(() => _isResending = true);
+    try {
+      final authService = await ref.read(authServiceProvider.future);
+      await authService.requestOtp(email: widget.email);
+      if (!mounted) return;
+      AirbnbToast.showSuccess(context, 'A new OTP has been sent to your email');
+    } catch (error) {
+      if (!mounted) return;
+      AirbnbToast.showError(context, error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isResending = false);
+      }
+    }
   }
 
   @override
@@ -46,10 +66,13 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
 
     ref.listen<AsyncValue>(authControllerProvider, (previous, next) {
       if (next.hasError) {
+        _isVerifying = false;
         AirbnbToast.showError(context, next.error.toString());
       } else if (!next.isLoading &&
           !next.hasError &&
-          previous?.isLoading == true) {
+          previous?.isLoading == true &&
+          _isVerifying) {
+        _isVerifying = false;
         AirbnbToast.showSuccess(context, 'Verification successful!');
         context.go('/dashboard');
       }
@@ -195,10 +218,8 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
                       ),
                       const SizedBox(height: 12),
                       CustomButton.ghost(
-                        text: 'Resend Code',
-                        onPressed: () => ref
-                            .read(authControllerProvider.notifier)
-                            .login(widget.email),
+                        text: _isResending ? 'Sending...' : 'Resend Code',
+                        onPressed: _isResending ? null : _resendCode,
                         width: 140,
                         height: 44,
                       ),
