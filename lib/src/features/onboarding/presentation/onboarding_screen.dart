@@ -33,7 +33,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     OnboardingSlide(
       title: 'Strategic Growth',
       description:
-          'Maximize your margins by selecting from Economy, Balanced, or Premium strategies based on your farm goals.',
+          'Maximize your margins by selecting Lowest Cost, Balanced, or Highest Match strategy based on your farm goals.',
       icon: Icons.trending_up_rounded,
       color: Colors.orangeAccent,
     ),

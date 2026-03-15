@@ -320,7 +320,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen>
                     _FeatureRow(text: 'Production weight (Unlimited kg)'),
                     _FeatureRow(text: 'Hidden ingredient ratios revealed'),
                     _FeatureRow(text: 'Real-time cost optimization'),
-                    _FeatureRow(text: 'Strategy comparison (Economy/Premium)'),
+                    _FeatureRow(
+                      text: 'Strategy comparison (Lowest Cost/Highest Match)',
+                    ),
                     _FeatureRow(text: 'Nutrient compliance checking'),
                     const SizedBox(height: 20),
                     if (!hasAccess)
