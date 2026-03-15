@@ -259,6 +259,33 @@ class HomeTab extends ConsumerWidget {
 
         const SizedBox(height: 24),
 
+        const _SectionHeader(title: 'Mix Trend'),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: _MixTrendStrip(points: data.mixTrendPoints),
+        ),
+
+        const SizedBox(height: 20),
+
+        const _SectionHeader(title: 'Top Cost Drivers'),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: _CostDriverPanel(items: data.topCostDrivers),
+        ),
+
+        const SizedBox(height: 20),
+
+        const _SectionHeader(title: 'Nutrient Misses'),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: _NutrientMissPanel(items: data.nutrientMisses),
+        ),
+
+        const SizedBox(height: 24),
+
         _SectionHeader(
           title: 'Recent Mixes',
           actionLabel: 'Open Builder',
@@ -827,6 +854,223 @@ class _MixOverviewCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _MixTrendStrip extends StatelessWidget {
+  final List<MixTrendPoint> points;
+
+  const _MixTrendStrip({required this.points});
+
+  @override
+  Widget build(BuildContext context) {
+    if (points.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.grey200),
+        ),
+        child: Text(
+          'No trend points yet. Run more mixes to see quality movement over time.',
+          style: TextStyle(color: AppTheme.grey600, fontSize: 12),
+        ),
+      );
+    }
+
+    final maxValue = points
+        .map((item) => item.value)
+        .fold<double>(0, (max, value) => value > max ? value : max);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.grey200),
+      ),
+      child: SizedBox(
+        height: 84,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemBuilder: (context, index) {
+            final item = points[index];
+            final ratio = maxValue <= 0
+                ? 0.0
+                : (item.value / maxValue).clamp(0.0, 1.0);
+            return SizedBox(
+              width: 72,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    '${item.value.toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.grey600,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Container(
+                        width: 18,
+                        height: 40 * ratio + 4,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    item.bucket,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppTheme.grey400,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          separatorBuilder: (_, _) => const SizedBox(width: 10),
+          itemCount: points.length,
+        ),
+      ),
+    );
+  }
+}
+
+class _CostDriverPanel extends StatelessWidget {
+  final List<CostDriverInsight> items;
+
+  const _CostDriverPanel({required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.grey200),
+        ),
+        child: Text(
+          'No cost-driver breakdown available yet.',
+          style: TextStyle(color: AppTheme.grey600, fontSize: 12),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.grey200),
+      ),
+      child: Column(
+        children: items.take(4).map((item) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item.ingredientName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.black,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${item.costSharePct.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class _NutrientMissPanel extends StatelessWidget {
+  final List<NutrientMissInsight> items;
+
+  const _NutrientMissPanel({required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.grey200),
+        ),
+        child: Text(
+          'No nutrient miss analysis yet.',
+          style: TextStyle(color: AppTheme.grey600, fontSize: 12),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.grey200),
+      ),
+      child: Column(
+        children: items.take(4).map((item) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item.nutrient.toUpperCase(),
+                    style: TextStyle(
+                      color: AppTheme.black,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${item.missRatePct.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    color: AppTheme.warning,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 }

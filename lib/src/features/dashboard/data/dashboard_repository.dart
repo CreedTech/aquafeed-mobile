@@ -14,6 +14,9 @@ class DashboardData {
   final FinancialSummary financials;
   final List<MixSummary> mixes;
   final MixMetrics mixMetrics;
+  final List<MixTrendPoint> mixTrendPoints;
+  final List<CostDriverInsight> topCostDrivers;
+  final List<NutrientMissInsight> nutrientMisses;
 
   DashboardData({
     required this.ponds,
@@ -21,6 +24,9 @@ class DashboardData {
     required this.financials,
     required this.mixes,
     required this.mixMetrics,
+    required this.mixTrendPoints,
+    required this.topCostDrivers,
+    required this.nutrientMisses,
   });
 
   /// Empty dashboard for when user is not authenticated
@@ -30,6 +36,9 @@ class DashboardData {
     financials: FinancialSummary.empty(),
     mixes: [],
     mixMetrics: MixMetrics.empty(),
+    mixTrendPoints: [],
+    topCostDrivers: [],
+    nutrientMisses: [],
   );
 
   int get totalMixes =>
@@ -54,6 +63,69 @@ class DashboardData {
     if (mixes.isEmpty) return 0;
     final total = mixes.fold<double>(0, (sum, mix) => sum + mix.qualityMatch);
     return total / mixes.length;
+  }
+}
+
+class MixTrendPoint {
+  final String bucket;
+  final double value;
+  final int sampleCount;
+
+  MixTrendPoint({
+    required this.bucket,
+    required this.value,
+    required this.sampleCount,
+  });
+
+  factory MixTrendPoint.fromJson(Map<String, dynamic> json) {
+    return MixTrendPoint(
+      bucket: json['bucket']?.toString() ?? '',
+      value: (json['value'] as num?)?.toDouble() ?? 0,
+      sampleCount: (json['sampleCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class CostDriverInsight {
+  final String ingredientName;
+  final double lineCostTotal;
+  final double costSharePct;
+
+  CostDriverInsight({
+    required this.ingredientName,
+    required this.lineCostTotal,
+    required this.costSharePct,
+  });
+
+  factory CostDriverInsight.fromJson(Map<String, dynamic> json) {
+    return CostDriverInsight(
+      ingredientName: json['ingredientName']?.toString() ?? 'Unknown',
+      lineCostTotal: (json['lineCostTotal'] as num?)?.toDouble() ?? 0,
+      costSharePct: (json['costSharePct'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+class NutrientMissInsight {
+  final String nutrient;
+  final int belowCount;
+  final int aboveCount;
+  final double missRatePct;
+
+  NutrientMissInsight({
+    required this.nutrient,
+    required this.belowCount,
+    required this.aboveCount,
+    required this.missRatePct,
+  });
+
+  factory NutrientMissInsight.fromJson(Map<String, dynamic> json) {
+    return NutrientMissInsight(
+      nutrient: json['nutrient']?.toString() ?? '',
+      belowCount: (json['belowCount'] as num?)?.toInt() ?? 0,
+      aboveCount: (json['aboveCount'] as num?)?.toInt() ?? 0,
+      missRatePct: (json['missRatePct'] as num?)?.toDouble() ?? 0,
+    );
   }
 }
 
@@ -343,12 +415,30 @@ class DashboardRepository extends _$DashboardRepository {
       // dashboard if this endpoint has a transient issue.
       Response<dynamic>? formulationsSummaryResponse;
       Response<dynamic>? formulationsListResponse;
+      Response<dynamic>? formulationsOverviewResponse;
+      Response<dynamic>? formulationsTrendResponse;
       try {
         formulationsSummaryResponse = await dio.get(
           '/formulations/summary?recentLimit=8',
         );
       } catch (_) {
         formulationsSummaryResponse = null;
+      }
+
+      try {
+        formulationsOverviewResponse = await dio.get(
+          '/formulations/analytics/overview',
+        );
+      } catch (_) {
+        formulationsOverviewResponse = null;
+      }
+
+      try {
+        formulationsTrendResponse = await dio.get(
+          '/formulations/analytics/trends?metric=qualityMatch&interval=week',
+        );
+      } catch (_) {
+        formulationsTrendResponse = null;
       }
 
       // Backward-compatible fallback for older backend deployments.
@@ -405,12 +495,49 @@ class DashboardRepository extends _$DashboardRepository {
           ? MixMetrics.fromSummaryJson(Map<String, dynamic>.from(summaryBlock))
           : MixMetrics.fromMixes(formulationsList);
 
+      final overviewMap = formulationsOverviewResponse?.data is Map
+          ? Map<String, dynamic>.from(formulationsOverviewResponse!.data)
+          : const <String, dynamic>{};
+      final topCostDrivers =
+          (overviewMap['topCostDrivers'] as List? ?? const [])
+              .whereType<Map>()
+              .map(
+                (item) => CostDriverInsight.fromJson(
+                  Map<String, dynamic>.from(item),
+                ),
+              )
+              .toList();
+      final nutrientMisses =
+          (overviewMap['nutrientMissFrequency'] as List? ?? const [])
+              .whereType<Map>()
+              .map(
+                (item) => NutrientMissInsight.fromJson(
+                  Map<String, dynamic>.from(item),
+                ),
+              )
+              .toList();
+
+      final trendMap = formulationsTrendResponse?.data is Map
+          ? Map<String, dynamic>.from(formulationsTrendResponse!.data)
+          : const <String, dynamic>{};
+      final mixTrendPoints = (trendMap['points'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => MixTrendPoint.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList();
+
       return DashboardData(
         ponds: ponds,
         inventory: inventory,
         financials: financials,
         mixes: formulationsList,
         mixMetrics: mixMetrics,
+        mixTrendPoints: mixTrendPoints,
+        topCostDrivers: topCostDrivers,
+        nutrientMisses: nutrientMisses,
       );
     } on DioException catch (e) {
       throw ErrorHelper.getUserMessage(e);

@@ -5,7 +5,7 @@ import 'package:iconsax_flutter/iconsax_flutter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/dashboard_state.dart';
 import 'home_tab.dart';
-import '../../diary/presentation/diary_tab.dart';
+import '../../analyst/presentation/analyst_tab.dart';
 import '../../inventory/presentation/inventory_tab.dart';
 import '../../financials/presentation/financials_tab.dart';
 import '../../profile/presentation/profile_tab.dart';
@@ -16,7 +16,7 @@ class DashboardScreen extends ConsumerWidget {
 
   static const List<Widget> _tabs = [
     HomeTab(),
-    DiaryTab(),
+    AnalystTab(),
     InventoryTab(),
     FinancialsTab(),
     ProfileTab(),
@@ -52,9 +52,9 @@ class DashboardScreen extends ConsumerWidget {
                       ref.read(dashboardTabIndexProvider.notifier).setTab(0),
                 ),
                 _NavItem(
-                  icon: Iconsax.note_1,
-                  activeIcon: Iconsax.note,
-                  label: 'Diary',
+                  icon: Icons.analytics_outlined,
+                  activeIcon: Icons.analytics,
+                  label: 'Analyst',
                   isSelected: selectedIndex == 1,
                   onTap: () =>
                       ref.read(dashboardTabIndexProvider.notifier).setTab(1),

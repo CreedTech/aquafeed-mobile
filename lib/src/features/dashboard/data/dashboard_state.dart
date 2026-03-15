@@ -14,6 +14,8 @@ class DashboardTabIndex extends _$DashboardTabIndex {
 
   void goToInventory() => state = 2;
   void goToFinancials() => state = 3;
+  void goToAnalyst() => state = 1;
+  // Backward compatibility for older calls.
   void goToDiary() => state = 1;
   void goToProfile() => state = 4;
 }
