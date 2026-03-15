@@ -17,10 +17,10 @@ class StrategyCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = result.strategy == 'LEAST_COST'
-        ? 'Economy'
+        ? 'Lowest Cost'
         : result.strategy == 'BALANCED'
         ? 'Balanced'
-        : 'Premium';
+        : 'Highest Match';
 
     return GestureDetector(
       onTap: onTap,

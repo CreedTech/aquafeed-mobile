@@ -7,8 +7,18 @@ import '../../data/formulation_repository.dart';
 /// Clean result view showing formulation details
 class DetailedResultView extends StatelessWidget {
   final FormulationResult result;
+  final bool showExactValues;
 
-  const DetailedResultView({super.key, required this.result});
+  const DetailedResultView({
+    super.key,
+    required this.result,
+    this.showExactValues = false,
+  });
+
+  String _format(double value, {int decimals = 2}) {
+    if (showExactValues) return value.toString();
+    return value.toStringAsFixed(decimals);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,8 +88,8 @@ class DetailedResultView extends StatelessWidget {
                       ),
                       Text(
                         result.isUnlocked
-                            ? '${result.qualityMatch.toStringAsFixed(1)}%'
-                            : '${result.qualityMatch.toStringAsFixed(1)}%', // Using real value for blur
+                            ? '${_format(result.qualityMatch, decimals: 1)}%'
+                            : '${_format(result.qualityMatch, decimals: 1)}%',
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ],
@@ -236,6 +246,7 @@ class DetailedResultView extends StatelessWidget {
                     (status) => _NutrientStatusRow(
                       status: status,
                       isUnlocked: result.isUnlocked,
+                      showExactValues: showExactValues,
                     ),
                   ),
                 ],
@@ -255,7 +266,7 @@ class DetailedResultView extends StatelessWidget {
               ),
             if (!result.isUnlocked)
               const Positioned.fill(
-                child: _PremiumUnlockOverlay(title: 'Unlock to view Analysis'),
+                child: _UnlockOverlay(title: 'Unlock to view Analysis'),
               ),
           ],
         ),
@@ -312,6 +323,7 @@ class DetailedResultView extends StatelessWidget {
                         (item) => _IngredientRow(
                           item: item,
                           isUnlocked: result.isUnlocked,
+                          showExactValues: showExactValues,
                         ),
                       )
                       .toList(),
@@ -331,7 +343,7 @@ class DetailedResultView extends StatelessWidget {
                 ),
               if (!result.isUnlocked)
                 const Positioned.fill(
-                  child: _PremiumUnlockOverlay(title: 'Unlock to view Recipe'),
+                  child: _UnlockOverlay(title: 'Unlock to view Recipe'),
                 ),
             ],
           )
@@ -358,7 +370,18 @@ class DetailedResultView extends StatelessWidget {
 class _NutrientStatusRow extends StatelessWidget {
   final NutrientStatus status;
   final bool isUnlocked;
-  const _NutrientStatusRow({required this.status, required this.isUnlocked});
+  final bool showExactValues;
+
+  const _NutrientStatusRow({
+    required this.status,
+    required this.isUnlocked,
+    required this.showExactValues,
+  });
+
+  String _format(double value, {int decimals = 2}) {
+    if (showExactValues) return value.toString();
+    return value.toStringAsFixed(decimals);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -373,9 +396,9 @@ class _NutrientStatusRow extends StatelessWidget {
       targetDisplay = 'XX.X$unit';
     } else if (status.targetMin != null && status.targetMax != null) {
       targetDisplay =
-          '${status.targetMin!.toStringAsFixed(0)}-${status.targetMax!.toStringAsFixed(0)}$unit';
+          '${_format(status.targetMin!, decimals: 0)}-${_format(status.targetMax!, decimals: 0)}$unit';
     } else {
-      targetDisplay = '${status.targetValue.toStringAsFixed(0)}$unit';
+      targetDisplay = '${_format(status.targetValue, decimals: 0)}$unit';
     }
 
     // Color and text based on status
@@ -419,7 +442,7 @@ class _NutrientStatusRow extends StatelessWidget {
           Expanded(
             child: Text(
               isUnlocked
-                  ? '${status.actual.toStringAsFixed(status.nutrient.toLowerCase() == 'energy' ? 0 : 1)}$unit'
+                  ? '${_format(status.actual, decimals: status.nutrient.toLowerCase() == 'energy' ? 0 : 1)}$unit'
                   : '--',
               style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               textAlign: TextAlign.center,
@@ -548,7 +571,18 @@ class _ComplianceBadge extends StatelessWidget {
 class _IngredientRow extends StatelessWidget {
   final IngredientUsed item;
   final bool isUnlocked;
-  const _IngredientRow({required this.item, required this.isUnlocked});
+  final bool showExactValues;
+
+  const _IngredientRow({
+    required this.item,
+    required this.isUnlocked,
+    required this.showExactValues,
+  });
+
+  String _format(double value, {int decimals = 2}) {
+    if (showExactValues) return value.toString();
+    return value.toStringAsFixed(decimals);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -598,7 +632,7 @@ class _IngredientRow extends StatelessWidget {
           ),
           if (isUnlocked) ...[
             Text(
-              '${item.qtyKg.toStringAsFixed(1)} kg',
+              '${_format(item.qtyKg, decimals: 1)} kg',
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             if (item.bags > 0) ...[
@@ -642,10 +676,10 @@ class _IngredientRow extends StatelessWidget {
   }
 }
 
-class _PremiumUnlockOverlay extends StatelessWidget {
+class _UnlockOverlay extends StatelessWidget {
   final String title;
 
-  const _PremiumUnlockOverlay({required this.title});
+  const _UnlockOverlay({required this.title});
 
   @override
   Widget build(BuildContext context) {

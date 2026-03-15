@@ -3,7 +3,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/formulation_repository.dart';
 
-/// Strategy comparison widget showing Economy, Balanced, Premium options
+/// Strategy comparison widget showing Lowest Cost, Balanced, Highest Match options
 class StrategyComparison extends StatelessWidget {
   final List<FormulationResult> results;
   final int selectedIndex;
@@ -57,16 +57,16 @@ class StrategyComparison extends StatelessWidget {
           // Assign labels based on sorted POSITION, not backend strategy
           if (sortedIndex == 0) {
             // Cheapest option
-            title = 'Economy';
+            title = 'Lowest Cost';
             subtitle = 'Optimized for lowest cost';
             icon = Icons.savings_outlined;
-            badge = 'Budget-friendly';
+            badge = 'Cost-first';
           } else if (sortedIndex == sortedResults.length - 1) {
             // Most expensive option
-            title = 'Premium';
+            title = 'Highest Match';
             subtitle = 'Highest quality ingredients';
             icon = Icons.star_outline;
-            badge = 'Best Quality';
+            badge = 'Quality-first';
           } else {
             // Middle option
             title = 'Balanced';
@@ -243,12 +243,12 @@ class StrategyComparison extends StatelessWidget {
     String hint;
 
     if (selected.strategy == 'LEAST_COST') {
-      // User selected Economy
+      // User selected Lowest Cost
       final qualityDiff = (mostExpensive.qualityMatch - selected.qualityMatch)
           .abs();
       if (qualityDiff > 5) {
         hint =
-            'You save ${formatter.format(mostExpensive.totalCost - selected.totalCost)} vs Premium, with ${qualityDiff.toStringAsFixed(0)}% lower quality match.';
+            'You save ${formatter.format(mostExpensive.totalCost - selected.totalCost)} vs Highest Match, with ${qualityDiff.toStringAsFixed(0)}% lower quality match.';
       } else {
         hint =
             'Most affordable option while still meeting nutritional requirements.';
@@ -258,13 +258,13 @@ class StrategyComparison extends StatelessWidget {
       final savings = selected.totalCost - cheapest.totalCost;
       final qualityGain = (selected.qualityMatch - cheapest.qualityMatch).abs();
       hint =
-          'Adds ${formatter.format(savings)} over Economy for ${qualityGain.toStringAsFixed(0)}% better quality match.';
+          'Adds ${formatter.format(savings)} over Lowest Cost for ${qualityGain.toStringAsFixed(0)}% better quality match.';
     } else {
-      // User selected Premium
+      // User selected Highest Match
       final extra = selected.totalCost - cheapest.totalCost;
       final qualityGain = (selected.qualityMatch - cheapest.qualityMatch).abs();
       hint =
-          'Costs ${formatter.format(extra)} more than Economy for ${qualityGain.toStringAsFixed(0)}% better quality match.';
+          'Costs ${formatter.format(extra)} more than Lowest Cost for ${qualityGain.toStringAsFixed(0)}% better quality match.';
     }
 
     return Container(

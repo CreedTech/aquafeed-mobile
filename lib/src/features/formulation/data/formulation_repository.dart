@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:dio/dio.dart';
 import '../../../core/networking/dio_provider.dart';
@@ -5,6 +7,41 @@ import '../../auth/data/auth_repository.dart';
 import '../../dashboard/data/dashboard_repository.dart';
 
 part 'formulation_repository.g.dart';
+
+String _extractApiErrorMessage(
+  Object error, {
+  String fallback = 'Request failed',
+}) {
+  if (error is DioException) {
+    final status = error.response?.statusCode;
+    final data = error.response?.data;
+    String message = fallback;
+
+    if (data is Map) {
+      final body = Map<String, dynamic>.from(data);
+      final directError = body['error']?.toString();
+      final directMessage = body['message']?.toString();
+      final details = body['details']?.toString();
+      if (directMessage != null && directMessage.trim().isNotEmpty) {
+        message = directMessage.trim();
+      } else if (directError != null && directError.trim().isNotEmpty) {
+        message = directError.trim();
+      } else if (details != null && details.trim().isNotEmpty) {
+        message = details.trim();
+      }
+    } else if (error.message != null && error.message!.trim().isNotEmpty) {
+      message = error.message!.trim();
+    }
+
+    if (status != null) {
+      return '$message (HTTP $status)';
+    }
+    return message;
+  }
+
+  final text = error.toString().replaceFirst('Exception: ', '').trim();
+  return text.isEmpty ? fallback : text;
+}
 
 /// Exception thrown when payment is required for access
 class PaymentRequiredException implements Exception {
@@ -135,6 +172,519 @@ class PreviewResult {
       estimatedComplianceDelta: json['estimatedComplianceDelta']?.toDouble(),
     );
   }
+}
+
+class CalculationEquationRow {
+  final String factId;
+  final String label;
+  final String equation;
+  final double value;
+  final String unit;
+
+  CalculationEquationRow({
+    required this.factId,
+    required this.label,
+    required this.equation,
+    required this.value,
+    required this.unit,
+  });
+
+  factory CalculationEquationRow.fromJson(Map<String, dynamic> json) {
+    return CalculationEquationRow(
+      factId: json['factId']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      equation: json['equation']?.toString() ?? '',
+      value: (json['value'] as num?)?.toDouble() ?? 0,
+      unit: json['unit']?.toString() ?? '',
+    );
+  }
+}
+
+class CalculationNutrientRow {
+  final String nutrient;
+  final String unit;
+  final double? targetMin;
+  final double? targetMax;
+  final double actual;
+  final double? deltaToMin;
+  final double? deltaToMax;
+  final String status;
+
+  CalculationNutrientRow({
+    required this.nutrient,
+    required this.unit,
+    this.targetMin,
+    this.targetMax,
+    required this.actual,
+    this.deltaToMin,
+    this.deltaToMax,
+    required this.status,
+  });
+
+  factory CalculationNutrientRow.fromJson(Map<String, dynamic> json) {
+    return CalculationNutrientRow(
+      nutrient: json['nutrient']?.toString() ?? '',
+      unit: json['unit']?.toString() ?? '',
+      targetMin: (json['targetMin'] as num?)?.toDouble(),
+      targetMax: (json['targetMax'] as num?)?.toDouble(),
+      actual: (json['actual'] as num?)?.toDouble() ?? 0,
+      deltaToMin: (json['deltaToMin'] as num?)?.toDouble(),
+      deltaToMax: (json['deltaToMax'] as num?)?.toDouble(),
+      status: json['status']?.toString() ?? 'no_target',
+    );
+  }
+}
+
+class CalculationLedger {
+  final String formulationId;
+  final String batchName;
+  final String feedType;
+  final String? stageCode;
+  final String? stageLabel;
+  final String? strategy;
+  final double targetWeightKg;
+  final double qualityMatchPercentage;
+  final String complianceColor;
+  final List<CalculationEquationRow> equationRows;
+  final List<CalculationNutrientRow> nutrientRows;
+
+  CalculationLedger({
+    required this.formulationId,
+    required this.batchName,
+    required this.feedType,
+    this.stageCode,
+    this.stageLabel,
+    this.strategy,
+    required this.targetWeightKg,
+    required this.qualityMatchPercentage,
+    required this.complianceColor,
+    required this.equationRows,
+    required this.nutrientRows,
+  });
+
+  factory CalculationLedger.fromJson(Map<String, dynamic> json) {
+    final equationRows = (json['equationRows'] as List? ?? [])
+        .whereType<Map>()
+        .map(
+          (row) =>
+              CalculationEquationRow.fromJson(Map<String, dynamic>.from(row)),
+        )
+        .toList();
+    final nutrientRows = (json['nutrientRows'] as List? ?? [])
+        .whereType<Map>()
+        .map(
+          (row) =>
+              CalculationNutrientRow.fromJson(Map<String, dynamic>.from(row)),
+        )
+        .toList();
+    return CalculationLedger(
+      formulationId: json['formulationId']?.toString() ?? '',
+      batchName: json['batchName']?.toString() ?? '',
+      feedType: json['feedType']?.toString() ?? '',
+      stageCode: json['stageCode']?.toString(),
+      stageLabel: json['stageLabel']?.toString(),
+      strategy: json['strategy']?.toString(),
+      targetWeightKg: (json['targetWeightKg'] as num?)?.toDouble() ?? 0,
+      qualityMatchPercentage:
+          (json['qualityMatchPercentage'] as num?)?.toDouble() ?? 0,
+      complianceColor: json['complianceColor']?.toString() ?? '',
+      equationRows: equationRows,
+      nutrientRows: nutrientRows,
+    );
+  }
+}
+
+class AiNumericClaim {
+  final String label;
+  final double value;
+  final String? unit;
+  final String factId;
+
+  AiNumericClaim({
+    required this.label,
+    required this.value,
+    this.unit,
+    required this.factId,
+  });
+
+  factory AiNumericClaim.fromJson(Map<String, dynamic> json) {
+    return AiNumericClaim(
+      label: json['label']?.toString() ?? '',
+      value: (json['value'] as num?)?.toDouble() ?? 0,
+      unit: json['unit']?.toString(),
+      factId: json['factId']?.toString() ?? '',
+    );
+  }
+}
+
+class AiAnalystResult {
+  final String answer;
+  final List<String> citations;
+  final List<AiNumericClaim> numericClaims;
+  final String verificationStatus; // passed | failed
+  final String? fallbackMessage;
+  final String? modelUsed;
+  final double? estimatedCostUsd;
+  final double? estimatedCostNgn;
+  final String? pricingSource;
+
+  AiAnalystResult({
+    required this.answer,
+    required this.citations,
+    required this.numericClaims,
+    required this.verificationStatus,
+    this.fallbackMessage,
+    this.modelUsed,
+    this.estimatedCostUsd,
+    this.estimatedCostNgn,
+    this.pricingSource,
+  });
+
+  factory AiAnalystResult.fromJson(Map<String, dynamic> json) {
+    final claims = (json['numericClaims'] as List? ?? [])
+        .whereType<Map>()
+        .map((item) => AiNumericClaim.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    final citations = (json['citations'] as List? ?? [])
+        .map((item) => item.toString())
+        .toList();
+    return AiAnalystResult(
+      answer: json['answer']?.toString() ?? '',
+      citations: citations,
+      numericClaims: claims,
+      verificationStatus: json['verificationStatus']?.toString() ?? 'failed',
+      fallbackMessage: json['fallbackMessage']?.toString(),
+      modelUsed: (json['meta'] as Map?)?['modelUsed']?.toString(),
+      estimatedCostUsd: ((json['meta'] as Map?)?['estimatedCostUsd'] as num?)
+          ?.toDouble(),
+      estimatedCostNgn: ((json['meta'] as Map?)?['estimatedCostNgn'] as num?)
+          ?.toDouble(),
+      pricingSource: (json['meta'] as Map?)?['pricingSource']?.toString(),
+    );
+  }
+}
+
+class AiThread {
+  final String id;
+  final String title;
+  final bool archived;
+  final String? firstQuestion;
+  final String? firstAnswer;
+  final String? selectedModelId;
+  final bool streamEnabled;
+  final DateTime? lastMessageAt;
+  final String? lastMessageText;
+  final String? formulationId;
+  final String? feedType;
+  final String? stageCode;
+
+  AiThread({
+    required this.id,
+    required this.title,
+    required this.archived,
+    this.firstQuestion,
+    this.firstAnswer,
+    this.selectedModelId,
+    this.streamEnabled = true,
+    this.lastMessageAt,
+    this.lastMessageText,
+    this.formulationId,
+    this.feedType,
+    this.stageCode,
+  });
+
+  factory AiThread.fromJson(Map<String, dynamic> json) {
+    final lastMessage = json['lastMessage'] as Map<String, dynamic>?;
+    final contextDefaults = json['contextDefaults'] as Map<String, dynamic>?;
+    final firstQuestion = json['first_question']?.toString();
+    final firstAnswer = json['first_answer']?.toString();
+    final guideTitle = firstQuestion != null && firstQuestion.trim().isNotEmpty
+        ? firstQuestion.trim()
+        : null;
+    return AiThread(
+      id: json['id']?.toString() ?? json['uuid']?.toString() ?? '',
+      title:
+          guideTitle ?? json['title']?.toString() ?? 'Formulation Assistant',
+      archived: json['archived'] == true || json['is_deleted'] == true,
+      firstQuestion: firstQuestion,
+      firstAnswer: firstAnswer,
+      selectedModelId: json['selectedModelId']?.toString(),
+      streamEnabled: json['streamEnabled'] != false,
+      lastMessageAt: DateTime.tryParse(
+        json['lastMessageAt']?.toString() ??
+            json['updated_at']?.toString() ??
+            '',
+      ),
+      lastMessageText: lastMessage?['text']?.toString(),
+      formulationId: contextDefaults?['formulationId']?.toString(),
+      feedType: contextDefaults?['feedType']?.toString(),
+      stageCode: contextDefaults?['stageCode']?.toString(),
+    );
+  }
+}
+
+class AiSource {
+  final String? type;
+  final String? title;
+  final String? reference;
+
+  AiSource({this.type, this.title, this.reference});
+
+  factory AiSource.fromJson(Map<String, dynamic> json) => AiSource(
+    type: json['type']?.toString(),
+    title: json['title']?.toString(),
+    reference: json['reference']?.toString(),
+  );
+}
+
+class AiResponseBlock {
+  final String type;
+  final String? title;
+  final String? content;
+  final List<Map<String, dynamic>> rows;
+
+  AiResponseBlock({
+    required this.type,
+    this.title,
+    this.content,
+    required this.rows,
+  });
+
+  factory AiResponseBlock.fromJson(Map<String, dynamic> json) {
+    final rows = (json['rows'] as List? ?? [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    return AiResponseBlock(
+      type: json['type']?.toString() ?? 'summary',
+      title: json['title']?.toString(),
+      content: json['content']?.toString(),
+      rows: rows,
+    );
+  }
+}
+
+class AiChatMessage {
+  final String id;
+  final String conversationId;
+  final String role;
+  final String text;
+  final String? rawContent;
+  final String? answerContent;
+  final String? thoughtProcess;
+  final String? answerMarkdown;
+  final List<String> citations;
+  final List<AiNumericClaim> numericClaims;
+  final List<Map<String, dynamic>> toolTrace;
+  final List<AiSource> sources;
+  final List<AiResponseBlock> responseBlocks;
+  final List<String> followUpPrompts;
+  final double? confidence;
+  final String? reasoningSummary;
+  final String? requestId;
+  final String? jobId;
+  final String? modelId;
+  final String? verificationStatus;
+  final String? fallbackMessage;
+  final Map<String, dynamic>? scenario;
+  final DateTime? createdAt;
+
+  AiChatMessage({
+    required this.id,
+    required this.conversationId,
+    required this.role,
+    required this.text,
+    this.rawContent,
+    this.answerContent,
+    this.thoughtProcess,
+    this.answerMarkdown,
+    required this.citations,
+    required this.numericClaims,
+    required this.toolTrace,
+    required this.sources,
+    required this.responseBlocks,
+    required this.followUpPrompts,
+    this.confidence,
+    this.reasoningSummary,
+    this.requestId,
+    this.jobId,
+    this.modelId,
+    this.verificationStatus,
+    this.fallbackMessage,
+    this.scenario,
+    this.createdAt,
+  });
+
+  bool get isUser => role.toLowerCase() == 'user';
+
+  factory AiChatMessage.fromJson(Map<String, dynamic> json) {
+    final claims = (json['numericClaims'] as List? ?? [])
+        .whereType<Map>()
+        .map((item) => AiNumericClaim.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    final sources = (json['sources'] as List? ?? [])
+        .whereType<Map>()
+        .map((item) => AiSource.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    final responseBlocks = (json['responseBlocks'] as List? ?? [])
+        .whereType<Map>()
+        .map((item) => AiResponseBlock.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    final citations = (json['citations'] as List? ?? [])
+        .map((item) => item.toString())
+        .toList();
+    final toolTrace = (json['toolTrace'] as List? ??
+            json['tool_trace'] as List? ??
+            const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    final followUps = (json['followUpPrompts'] as List? ?? [])
+        .map((item) => item.toString())
+        .toList();
+    final role = json['role']?.toString() ??
+        ((json['type']?.toString().toUpperCase() == 'INPUT')
+            ? 'user'
+            : 'assistant');
+    final text = json['text']?.toString() ??
+        json['content']?.toString() ??
+        json['answer_content']?.toString() ??
+        '';
+    return AiChatMessage(
+      id: json['id']?.toString() ?? '',
+      conversationId:
+          json['conversationId']?.toString() ??
+          json['conversation_uuid']?.toString() ??
+          '',
+      role: role,
+      text: text,
+      rawContent: json['rawContent']?.toString() ?? json['content']?.toString(),
+      answerContent: json['answerContent']?.toString() ??
+          json['answer_content']?.toString(),
+      thoughtProcess: json['thoughtProcess']?.toString() ??
+          json['thought_process']?.toString(),
+      answerMarkdown: json['answerMarkdown']?.toString() ??
+          json['answer_content']?.toString(),
+      citations: citations,
+      numericClaims: claims,
+      toolTrace: toolTrace,
+      sources: sources,
+      responseBlocks: responseBlocks,
+      followUpPrompts: followUps,
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      reasoningSummary: json['reasoningSummary']?.toString(),
+      requestId: json['requestId']?.toString(),
+      jobId: json['jobId']?.toString(),
+      modelId: json['modelId']?.toString(),
+      verificationStatus: json['verificationStatus']?.toString() ??
+          json['verification_status']?.toString(),
+      fallbackMessage: json['fallbackMessage']?.toString() ??
+          json['fallback_message']?.toString(),
+      scenario: json['scenario'] is Map
+          ? Map<String, dynamic>.from(json['scenario'])
+          : null,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+    );
+  }
+}
+
+class AiScenarioResult {
+  final String scenarioType;
+  final String title;
+  final String summary;
+  final double? totalCostDelta;
+  final double? costPerKgDelta;
+  final double? qualityMatchDelta;
+  final String? complianceBefore;
+  final String? complianceAfter;
+  final List<String> violations;
+  final List<String> recommendations;
+
+  AiScenarioResult({
+    required this.scenarioType,
+    required this.title,
+    required this.summary,
+    this.totalCostDelta,
+    this.costPerKgDelta,
+    this.qualityMatchDelta,
+    this.complianceBefore,
+    this.complianceAfter,
+    required this.violations,
+    required this.recommendations,
+  });
+
+  factory AiScenarioResult.fromJson(Map<String, dynamic> json) {
+    final deltas = json['deltas'] is Map<String, dynamic>
+        ? json['deltas'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    return AiScenarioResult(
+      scenarioType: json['scenarioType']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      summary: json['summary']?.toString() ?? '',
+      totalCostDelta: (deltas['totalCost'] as num?)?.toDouble(),
+      costPerKgDelta: (deltas['costPerKg'] as num?)?.toDouble(),
+      qualityMatchDelta: (deltas['qualityMatch'] as num?)?.toDouble(),
+      complianceBefore: deltas['complianceBefore']?.toString(),
+      complianceAfter: deltas['complianceAfter']?.toString(),
+      violations: (json['violations'] as List? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      recommendations: (json['recommendations'] as List? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+    );
+  }
+}
+
+class AiModelOption {
+  final String id;
+  final String name;
+  final bool isFree;
+  final int? contextLength;
+
+  AiModelOption({
+    required this.id,
+    required this.name,
+    required this.isFree,
+    this.contextLength,
+  });
+
+  factory AiModelOption.fromJson(Map<String, dynamic> json) => AiModelOption(
+    id: json['id']?.toString() ?? '',
+    name: json['name']?.toString() ?? json['id']?.toString() ?? '',
+    isFree: json['isFree'] == true,
+    contextLength: (json['contextLength'] as num?)?.toInt(),
+  );
+}
+
+class AiModelCatalog {
+  final String defaultModelId;
+  final List<AiModelOption> models;
+
+  AiModelCatalog({required this.defaultModelId, required this.models});
+}
+
+class AiJobStatusResult {
+  final String id;
+  final String status;
+  final String requestId;
+  final AiChatMessage? assistantMessage;
+  final String? errorMessage;
+
+  AiJobStatusResult({
+    required this.id,
+    required this.status,
+    required this.requestId,
+    this.assistantMessage,
+    this.errorMessage,
+  });
+}
+
+class AiStreamEvent {
+  final String type;
+  final Map<String, dynamic> payload;
+
+  AiStreamEvent({required this.type, required this.payload});
 }
 
 /// Ingredient model
@@ -609,7 +1159,9 @@ class FormulationNotifier extends _$FormulationNotifier {
     );
     final payload = response.data['formulation'] as Map<String, dynamic>? ?? {};
     final payloadStrategy = payload['strategy']?.toString();
-    final normalizedStrategy = (payloadStrategy ?? strategy)?.trim().toUpperCase();
+    final normalizedStrategy = (payloadStrategy ?? strategy)
+        ?.trim()
+        .toUpperCase();
 
     final payloadIngredients = payload['recipe'] ?? payload['ingredientsUsed'];
     final parsedIngredients = payloadIngredients is List
@@ -694,6 +1246,433 @@ class FormulationNotifier extends _$FormulationNotifier {
 
     ref.invalidate(dashboardRepositoryProvider);
     return unlockedResult;
+  }
+
+  Future<CalculationLedger> getCalculationLedger(String formulationId) async {
+    final dio = await ref.watch(dioProvider.future);
+    final response = await dio.get(
+      '/formulations/$formulationId/calculation-ledger',
+    );
+    final payload = response.data is Map
+        ? Map<String, dynamic>.from(response.data)
+        : <String, dynamic>{};
+    return CalculationLedger.fromJson(payload);
+  }
+
+  Future<AiAnalystResult> askAnalyst({
+    String? formulationId,
+    required String question,
+    bool whatIf = false,
+    String? feedType,
+    String? stageCode,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final path = whatIf
+        ? '/ai/formulation-analyst/what-if'
+        : '/ai/formulation-analyst/query';
+    final payload = <String, dynamic>{'question': question.trim()};
+    if (formulationId != null && formulationId.trim().isNotEmpty) {
+      payload['formulationId'] = formulationId.trim();
+    }
+    if (feedType != null && feedType.trim().isNotEmpty) {
+      payload['feedType'] = feedType.trim().toLowerCase();
+    }
+    if (stageCode != null && stageCode.trim().isNotEmpty) {
+      payload['stageCode'] = stageCode.trim().toUpperCase();
+    }
+    final response = await dio.post(path, data: payload);
+    final responsePayload = response.data is Map
+        ? Map<String, dynamic>.from(response.data)
+        : <String, dynamic>{};
+    return AiAnalystResult.fromJson(responsePayload);
+  }
+
+  Future<AiThread> createAiThread({
+    String? title,
+    String? formulationId,
+    String? feedType,
+    String? stageCode,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final payload = <String, dynamic>{};
+    if (title != null && title.trim().isNotEmpty) {
+      payload['title'] = title.trim();
+    }
+    final contextDefaults = <String, dynamic>{};
+    if (formulationId != null && formulationId.trim().isNotEmpty) {
+      contextDefaults['formulationId'] = formulationId.trim();
+    }
+    if (feedType != null && feedType.trim().isNotEmpty) {
+      contextDefaults['feedType'] = feedType.trim().toLowerCase();
+    }
+    if (stageCode != null && stageCode.trim().isNotEmpty) {
+      contextDefaults['stageCode'] = stageCode.trim().toUpperCase();
+    }
+    if (contextDefaults.isNotEmpty) {
+      payload['contextDefaults'] = contextDefaults;
+    }
+    try {
+      final response = await dio.post(
+        '/ai/formulation-analyst/threads',
+        data: payload,
+      );
+      final threadJson = response.data['thread'] is Map
+          ? Map<String, dynamic>.from(response.data['thread'])
+          : <String, dynamic>{};
+      return AiThread.fromJson(threadJson);
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(error, fallback: 'Unable to create AI chat'),
+      );
+    }
+  }
+
+  Future<AiModelCatalog> getAiModels() async {
+    final dio = await ref.watch(dioProvider.future);
+    try {
+      final response = await dio.get('/ai/formulation-analyst/models');
+      final models = (response.data['models'] as List? ?? [])
+          .whereType<Map>()
+          .map((item) => AiModelOption.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+      final defaultModelId = response.data['defaultModelId']?.toString() ?? '';
+      return AiModelCatalog(defaultModelId: defaultModelId, models: models);
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(error, fallback: 'Unable to load AI models'),
+      );
+    }
+  }
+
+  Future<List<AiThread>> getAiThreads() async {
+    final dio = await ref.watch(dioProvider.future);
+    try {
+      final response = await dio.get('/ai/conversations');
+      return (response.data['data'] as List? ?? [])
+          .whereType<Map>()
+          .map((item) => AiThread.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+    } catch (error) {
+      try {
+        final fallback = await dio.get('/ai/formulation-analyst/threads');
+        return (fallback.data['threads'] as List? ?? [])
+            .whereType<Map>()
+            .map((item) => AiThread.fromJson(Map<String, dynamic>.from(item)))
+            .toList();
+      } catch (_) {
+        throw Exception(
+          _extractApiErrorMessage(error, fallback: 'Unable to load AI chats'),
+        );
+      }
+    }
+  }
+
+  Future<AiThread> updateAiThreadSettings({
+    required String threadId,
+    String? modelId,
+    bool? streamEnabled,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final payload = <String, dynamic>{};
+    if (modelId != null && modelId.trim().isNotEmpty) {
+      payload['modelId'] = modelId.trim();
+    }
+    if (streamEnabled != null) {
+      payload['streamEnabled'] = streamEnabled;
+    }
+    try {
+      final response = await dio.patch(
+        '/ai/formulation-analyst/threads/$threadId/settings',
+        data: payload,
+      );
+      final threadJson = response.data['thread'] is Map
+          ? Map<String, dynamic>.from(response.data['thread'])
+          : <String, dynamic>{};
+      return AiThread.fromJson(threadJson);
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(
+          error,
+          fallback: 'Unable to update AI thread settings',
+        ),
+      );
+    }
+  }
+
+  Future<List<AiChatMessage>> getAiThreadMessages(String threadId) async {
+    final dio = await ref.watch(dioProvider.future);
+    try {
+      final response = await dio.get('/ai/conversations/$threadId');
+      final data = response.data['data'] is Map
+          ? Map<String, dynamic>.from(response.data['data'])
+          : <String, dynamic>{};
+      return (data['messages'] as List? ?? [])
+          .whereType<Map>()
+          .map(
+            (item) => AiChatMessage.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList();
+    } catch (error) {
+      try {
+        final fallback = await dio.get(
+          '/ai/formulation-analyst/threads/$threadId/messages',
+        );
+        return (fallback.data['messages'] as List? ?? [])
+            .whereType<Map>()
+            .map(
+              (item) => AiChatMessage.fromJson(Map<String, dynamic>.from(item)),
+            )
+            .toList();
+      } catch (_) {
+        throw Exception(
+          _extractApiErrorMessage(error, fallback: 'Unable to load messages'),
+        );
+      }
+    }
+  }
+
+  Future<
+    ({
+      AiChatMessage assistantMessage,
+      double? estimatedCostUsd,
+      double? estimatedCostNgn,
+      String? modelUsed,
+    })
+  >
+  sendAiThreadMessage({
+    required String threadId,
+    required String message,
+    String? formulationId,
+    String? feedType,
+    String? stageCode,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final payload = <String, dynamic>{'message': message.trim()};
+    if (formulationId != null && formulationId.trim().isNotEmpty) {
+      payload['formulationId'] = formulationId.trim();
+    }
+    if (feedType != null && feedType.trim().isNotEmpty) {
+      payload['feedType'] = feedType.trim().toLowerCase();
+    }
+    if (stageCode != null && stageCode.trim().isNotEmpty) {
+      payload['stageCode'] = stageCode.trim().toUpperCase();
+    }
+    try {
+      final response = await dio.post(
+        '/ai/formulation-analyst/threads/$threadId/messages',
+        data: payload,
+      );
+      final assistantJson = response.data['assistantMessage'] is Map
+          ? Map<String, dynamic>.from(response.data['assistantMessage'])
+          : <String, dynamic>{};
+      final meta = response.data['meta'] is Map
+          ? Map<String, dynamic>.from(response.data['meta'])
+          : <String, dynamic>{};
+      return (
+        assistantMessage: AiChatMessage.fromJson(assistantJson),
+        estimatedCostUsd: (meta['estimatedCostUsd'] as num?)?.toDouble(),
+        estimatedCostNgn: (meta['estimatedCostNgn'] as num?)?.toDouble(),
+        modelUsed: meta['modelUsed']?.toString(),
+      );
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(
+          error,
+          fallback: 'Unable to send analyst message',
+        ),
+      );
+    }
+  }
+
+  Future<
+    ({String jobId, String requestId, AiChatMessage? userMessage, AiThread? thread})
+  >
+  submitAiThreadMessage({
+    required String threadId,
+    required String message,
+    String? formulationId,
+    String? feedType,
+    String? stageCode,
+    String? modelId,
+    bool? stream,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final payload = <String, dynamic>{'message': message.trim()};
+    if (formulationId != null && formulationId.trim().isNotEmpty) {
+      payload['formulationId'] = formulationId.trim();
+    }
+    if (feedType != null && feedType.trim().isNotEmpty) {
+      payload['feedType'] = feedType.trim().toLowerCase();
+    }
+    if (stageCode != null && stageCode.trim().isNotEmpty) {
+      payload['stageCode'] = stageCode.trim().toUpperCase();
+    }
+    if (modelId != null && modelId.trim().isNotEmpty) {
+      payload['modelId'] = modelId.trim();
+    }
+    if (stream != null) {
+      payload['stream'] = stream;
+    }
+    try {
+      final response = await dio.post(
+        '/ai/formulation-analyst/threads/$threadId/messages/submit',
+        data: payload,
+      );
+      final job = response.data['job'] is Map
+          ? Map<String, dynamic>.from(response.data['job'])
+          : <String, dynamic>{};
+      final userMessageJson = response.data['userMessage'] is Map
+          ? Map<String, dynamic>.from(response.data['userMessage'])
+          : null;
+      final threadJson = response.data['thread'] is Map
+          ? Map<String, dynamic>.from(response.data['thread'])
+          : null;
+      return (
+        jobId: job['id']?.toString() ?? '',
+        requestId: response.data['requestId']?.toString() ?? '',
+        userMessage: userMessageJson != null
+            ? AiChatMessage.fromJson(userMessageJson)
+            : null,
+        thread: threadJson != null ? AiThread.fromJson(threadJson) : null,
+      );
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(
+          error,
+          fallback: 'Unable to submit analyst message',
+        ),
+      );
+    }
+  }
+
+  Future<AiJobStatusResult> getAiJobStatus(String jobId) async {
+    final dio = await ref.watch(dioProvider.future);
+    try {
+      final response = await dio.get('/ai/formulation-analyst/jobs/$jobId');
+      final jobJson = response.data['job'] is Map
+          ? Map<String, dynamic>.from(response.data['job'])
+          : <String, dynamic>{};
+      final assistantMessageJson = response.data['assistantMessage'] is Map
+          ? Map<String, dynamic>.from(response.data['assistantMessage'])
+          : null;
+      return AiJobStatusResult(
+        id: jobJson['id']?.toString() ?? jobId,
+        status: jobJson['status']?.toString() ?? 'queued',
+        requestId: jobJson['requestId']?.toString() ?? '',
+        assistantMessage: assistantMessageJson != null
+            ? AiChatMessage.fromJson(assistantMessageJson)
+            : null,
+        errorMessage: jobJson['errorMessage']?.toString(),
+      );
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(
+          error,
+          fallback: 'Unable to fetch AI job status',
+        ),
+      );
+    }
+  }
+
+  Stream<AiStreamEvent> streamAiJob(String jobId) async* {
+    final dio = await ref.watch(dioProvider.future);
+    final response = await dio.get(
+      '/ai/formulation-analyst/jobs/$jobId/stream',
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: {'Accept': 'text/event-stream'},
+      ),
+    );
+
+    final responseBody = response.data;
+    if (responseBody is! ResponseBody) {
+      throw Exception('Invalid stream response');
+    }
+
+    String eventType = 'message';
+    final dataLines = <String>[];
+    await for (final line in responseBody.stream
+        .cast<List<int>>()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())) {
+      if (line.startsWith(':')) {
+        continue;
+      }
+      if (line.isEmpty) {
+        if (dataLines.isNotEmpty) {
+          final dataText = dataLines.join('\n');
+          Map<String, dynamic> payload = <String, dynamic>{};
+          if (dataText.isNotEmpty) {
+            try {
+              final decoded = jsonDecode(dataText);
+              if (decoded is Map<String, dynamic>) {
+                payload = decoded;
+              }
+            } catch (_) {
+              payload = {'raw': dataText};
+            }
+          }
+          yield AiStreamEvent(type: eventType, payload: payload);
+        }
+        eventType = 'message';
+        dataLines.clear();
+        continue;
+      }
+      if (line.startsWith('event:')) {
+        eventType = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.add(line.substring(5).trim());
+      }
+    }
+  }
+
+  Future<({AiChatMessage assistantMessage, AiScenarioResult scenario})>
+  runAiScenario({
+    required String threadId,
+    required String scenarioType,
+    String? formulationId,
+    String? feedType,
+    String? stageCode,
+    Map<String, dynamic>? parameters,
+  }) async {
+    final dio = await ref.watch(dioProvider.future);
+    final payload = <String, dynamic>{
+      'scenarioType': scenarioType,
+      if (parameters != null) 'parameters': parameters,
+    };
+    if (formulationId != null && formulationId.trim().isNotEmpty) {
+      payload['formulationId'] = formulationId.trim();
+    }
+    if (feedType != null && feedType.trim().isNotEmpty) {
+      payload['feedType'] = feedType.trim().toLowerCase();
+    }
+    if (stageCode != null && stageCode.trim().isNotEmpty) {
+      payload['stageCode'] = stageCode.trim().toUpperCase();
+    }
+
+    try {
+      final response = await dio.post(
+        '/ai/formulation-analyst/threads/$threadId/scenario',
+        data: payload,
+      );
+      final assistantJson = response.data['assistantMessage'] is Map
+          ? Map<String, dynamic>.from(response.data['assistantMessage'])
+          : <String, dynamic>{};
+      final scenarioJson = response.data['scenario'] is Map
+          ? Map<String, dynamic>.from(response.data['scenario'])
+          : <String, dynamic>{};
+      return (
+        assistantMessage: AiChatMessage.fromJson(assistantJson),
+        scenario: AiScenarioResult.fromJson(scenarioJson),
+      );
+    } catch (error) {
+      throw Exception(
+        _extractApiErrorMessage(
+          error,
+          fallback: 'Unable to run analyst scenario',
+        ),
+      );
+    }
   }
 
   Future<double> getUnlockFee() async {

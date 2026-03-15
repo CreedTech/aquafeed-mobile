@@ -9,6 +9,8 @@ import '../../../core/widgets/auth_required_view.dart';
 import '../../../core/widgets/airbnb_toast.dart';
 import '../../../core/security/privacy_guard.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../analyst/data/analyst_context.dart';
+import '../../dashboard/data/dashboard_state.dart';
 import '../../payment/data/payment_repository.dart';
 import '../../payment/presentation/payment_checkout_webview_screen.dart';
 import '../data/formulation_repository.dart';
@@ -39,6 +41,7 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
   String _searchQuery = '';
   bool _showSelectedOnly = false;
   bool _compactIngredientCards = true;
+  bool _showExactValues = false;
   _IngredientSortMode _ingredientSortMode = _IngredientSortMode.relevance;
 
   final Set<String> _selectedIngredientIds = {};
@@ -211,6 +214,327 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
       requiresDeposit: requiresDeposit,
       requiredAmount: requiredAmount,
     );
+  }
+
+  Future<void> _showCalculationLedger(String formulationId) async {
+    try {
+      final ledger = await ref
+          .read(formulationProvider.notifier)
+          .getCalculationLedger(formulationId);
+      if (!mounted) return;
+
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (context) {
+          return SafeArea(
+            child: DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.86,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              builder: (_, scrollController) {
+                return ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppTheme.grey200,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Calculation Ledger',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.black,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${ledger.batchName} • ${ledger.feedType.toUpperCase()}',
+                      style: TextStyle(fontSize: 12, color: AppTheme.grey600),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Text(
+                          'Display mode',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.black,
+                          ),
+                        ),
+                        const Spacer(),
+                        ChoiceChip(
+                          selected: _showExactValues,
+                          label: Text(_showExactValues ? 'Exact' : 'Friendly'),
+                          onSelected: (_) {
+                            setState(() {
+                              _showExactValues = !_showExactValues;
+                            });
+                            Navigator.pop(context);
+                            _showCalculationLedger(formulationId);
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.grey100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Totals',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.black,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Target Weight: ${_formatValue(ledger.targetWeightKg, decimals: 2)} kg',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.grey600,
+                            ),
+                          ),
+                          Text(
+                            'Quality Match: ${_formatValue(ledger.qualityMatchPercentage, decimals: 2)}%',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.grey600,
+                            ),
+                          ),
+                          Text(
+                            'Compliance: ${ledger.complianceColor}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.grey600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Equation Rows',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...ledger.equationRows.map(
+                      (row) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.grey200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              row.label,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.black,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              row.equation,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.grey600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${_formatValue(row.value, decimals: 4)} ${row.unit}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Nutrient Rows',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.black,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...ledger.nutrientRows.map(
+                      (row) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.grey200),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    row.nutrient.toUpperCase(),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.black,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Target: ${row.targetMin == null ? '-' : _formatValue(row.targetMin!, decimals: 4)} to ${row.targetMax == null ? '-' : _formatValue(row.targetMax!, decimals: 4)} ${row.unit}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppTheme.grey600,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Actual: ${_formatValue(row.actual, decimals: 4)} ${row.unit}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppTheme.grey600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _statusChip(row.status),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      AirbnbToast.showError(context, 'Unable to load calculation ledger.');
+    }
+  }
+
+  Widget _statusChip(String status) {
+    Color color;
+    String label;
+    switch (status.toLowerCase()) {
+      case 'within':
+        color = AppTheme.success;
+        label = 'Within';
+        break;
+      case 'passed':
+        color = AppTheme.success;
+        label = 'Verified';
+        break;
+      case 'below':
+        color = AppTheme.warning;
+        label = 'Below';
+        break;
+      case 'above':
+        color = AppTheme.error;
+        label = 'Above';
+        break;
+      case 'failed':
+        color = AppTheme.error;
+        label = 'Unverified';
+        break;
+      default:
+        color = AppTheme.grey600;
+        label = 'No target';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  void _openAnalystForMix(FormulationResult result) {
+    final formulationId = result.formulationId;
+    if (formulationId == null || formulationId.isEmpty) return;
+
+    final standards =
+        ref.read(feedStandardsProvider).asData?.value ?? const <FeedStandard>[];
+    FeedStandard? selectedStandard;
+    for (final standard in standards) {
+      if (standard.id == _selectedStandardId) {
+        selectedStandard = standard;
+        break;
+      }
+    }
+    final stageCode = selectedStandard?.stageCode ?? selectedStandard?.stage;
+
+    ref
+        .read(analystContextProvider.notifier)
+        .setContext(
+          AnalystContext(
+            formulationId: formulationId,
+            feedType: _selectedCategory.toLowerCase(),
+            stageCode: stageCode,
+          ),
+        );
+    ref.read(dashboardTabIndexProvider.notifier).goToAnalyst();
+    AirbnbToast.showInfo(
+      context,
+      'Opening analyst chat with this mix context.',
+    );
+    context.go('/dashboard');
+  }
+
+  String _formatValue(double value, {int decimals = 2}) {
+    if (_showExactValues) return value.toString();
+    return value.toStringAsFixed(decimals);
   }
 
   int _recommendedTopUpAmount(double requiredAmount) {
@@ -1198,39 +1522,42 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
             style: const TextStyle(color: AppTheme.errorRed),
           ),
           data: (standards) {
-            final filtered = standards
-                .where(
-                  (s) =>
-                      ((_selectedCategory == 'Fish' &&
-                              (s.feedCategory == 'Catfish' ||
-                                  (s.feedType ?? '').toLowerCase() ==
-                                      'fish')) ||
-                          (_selectedCategory == 'Poultry' &&
-                              s.feedCategory == 'Poultry')) &&
-                      (_selectedCategory != 'Poultry' ||
-                          s.poultryType == _selectedPoultryType),
-                )
-                .toList()
-              ..sort((a, b) {
-                const poultryOrder = {
-                  'POULTRY_BROILER_STARTER': 1,
-                  'POULTRY_BROILER_GROWER': 2,
-                  'POULTRY_BROILER_FINISHER': 3,
-                  'POULTRY_LAYER_STARTER': 1,
-                  'POULTRY_LAYER_GROWER': 2,
-                  'POULTRY_LAYER_PRE_LAY': 3,
-                  'POULTRY_LAYER_PHASE_1': 4,
-                  'POULTRY_LAYER_PHASE_2': 5,
-                  'POULTRY_LAYER_PHASE_3': 6,
-                };
+            final filtered =
+                standards
+                    .where(
+                      (s) =>
+                          ((_selectedCategory == 'Fish' &&
+                                  (s.feedCategory == 'Catfish' ||
+                                      (s.feedType ?? '').toLowerCase() ==
+                                          'fish')) ||
+                              (_selectedCategory == 'Poultry' &&
+                                  s.feedCategory == 'Poultry')) &&
+                          (_selectedCategory != 'Poultry' ||
+                              s.poultryType == _selectedPoultryType),
+                    )
+                    .toList()
+                  ..sort((a, b) {
+                    const poultryOrder = {
+                      'POULTRY_BROILER_STARTER': 1,
+                      'POULTRY_BROILER_GROWER': 2,
+                      'POULTRY_BROILER_FINISHER': 3,
+                      'POULTRY_LAYER_STARTER': 1,
+                      'POULTRY_LAYER_GROWER': 2,
+                      'POULTRY_LAYER_PRE_LAY': 3,
+                      'POULTRY_LAYER_PHASE_1': 4,
+                      'POULTRY_LAYER_PHASE_2': 5,
+                      'POULTRY_LAYER_PHASE_3': 6,
+                    };
 
-                final aCode = a.stageCode ?? '';
-                final bCode = b.stageCode ?? '';
-                final aRank = poultryOrder[aCode] ?? 999;
-                final bRank = poultryOrder[bCode] ?? 999;
-                if (aRank != bRank) return aRank.compareTo(bRank);
-                return a.stage.toLowerCase().compareTo(b.stage.toLowerCase());
-              });
+                    final aCode = a.stageCode ?? '';
+                    final bCode = b.stageCode ?? '';
+                    final aRank = poultryOrder[aCode] ?? 999;
+                    final bRank = poultryOrder[bCode] ?? 999;
+                    if (aRank != bRank) return aRank.compareTo(bRank);
+                    return a.stage.toLowerCase().compareTo(
+                      b.stage.toLowerCase(),
+                    );
+                  });
 
             if (filtered.isEmpty) {
               return Container(
@@ -1393,8 +1720,55 @@ class _FormulationScreenState extends ConsumerState<FormulationScreen>
               const SizedBox(height: 24),
 
               // Selected result details
-              DetailedResultView(result: result),
+              DetailedResultView(
+                result: result,
+                showExactValues: _showExactValues,
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    'Display values',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.grey600,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    selected: _showExactValues,
+                    label: Text(_showExactValues ? 'Exact' : 'Friendly'),
+                    onSelected: (_) =>
+                        setState(() => _showExactValues = !_showExactValues),
+                  ),
+                ],
+              ),
               const SizedBox(height: 24),
+
+              if (result.formulationId != null) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            _showCalculationLedger(result.formulationId!),
+                        icon: const Icon(Icons.calculate_outlined, size: 18),
+                        label: const Text('Calculation Ledger'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _openAnalystForMix(result),
+                        icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                        label: const Text('Ask About This Mix'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+              ],
 
               // Action buttons
               if (!result.isUnlocked && result.formulationId != null) ...[
