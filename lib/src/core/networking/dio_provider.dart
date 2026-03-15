@@ -34,8 +34,9 @@ Future<Dio> dio(Ref ref) async {
 
   dio.options = BaseOptions(
     baseUrl: baseUrl,
-    connectTimeout: const Duration(seconds: 5),
-    receiveTimeout: const Duration(seconds: 3),
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 45),
+    sendTimeout: const Duration(seconds: 30),
     headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
   );
 

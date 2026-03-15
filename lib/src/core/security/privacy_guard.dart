@@ -1,11 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 import 'package:no_screenshot/no_screenshot.dart';
 
 /// Cross-platform privacy guard.
 ///
-/// - Android: enables FLAG_SECURE + no_screenshot.
+/// - Android/iOS: best-effort screenshot blocking via no_screenshot.
 /// - iOS: best-effort no_screenshot only (platform restrictions apply).
 /// - Web/Desktop: no-op.
 class PrivacyGuard {
@@ -24,20 +23,6 @@ class PrivacyGuard {
     if (!_isSupportedPlatform) return;
 
     try {
-      if (_isAndroid) {
-        await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
-      }
-    } on MissingPluginException {
-      _logOnceEnable(
-        'Privacy guard: window protection not available on this platform build.',
-      );
-    } catch (_) {
-      _logOnceEnable(
-        'Privacy guard: unable to enable window-level protection.',
-      );
-    }
-
-    try {
       await NoScreenshot.instance.screenshotOff();
     } on MissingPluginException {
       _logOnceEnable(
@@ -50,20 +35,6 @@ class PrivacyGuard {
 
   static Future<void> disable() async {
     if (!_isSupportedPlatform) return;
-
-    try {
-      if (_isAndroid) {
-        await FlutterWindowManager.clearFlags(FlutterWindowManager.FLAG_SECURE);
-      }
-    } on MissingPluginException {
-      _logOnceDisable(
-        'Privacy guard: window protection clear not available on this platform build.',
-      );
-    } catch (_) {
-      _logOnceDisable(
-        'Privacy guard: unable to clear window-level protection.',
-      );
-    }
 
     try {
       await NoScreenshot.instance.screenshotOn();
