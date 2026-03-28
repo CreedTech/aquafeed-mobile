@@ -50,7 +50,7 @@ final class IngredientsProvider
   }
 }
 
-String _$ingredientsHash() => r'f32e32920ffee892f7dce9654e194aa9de8b4229';
+String _$ingredientsHash() => r'2c35d8cb00155d5ebda31a869d1937de5670e6e6';
 
 /// Feed standards provider
 
@@ -96,7 +96,7 @@ final class FeedStandardsProvider
   }
 }
 
-String _$feedStandardsHash() => r'1ad33376f71b69287d8d4f7977fde02fc971a9e8';
+String _$feedStandardsHash() => r'b14fd09e1fbd88913a3b10e6a8c4fa459a9b6a79';
 
 /// Feed templates provider
 
@@ -142,7 +142,7 @@ final class FeedTemplatesProvider
   }
 }
 
-String _$feedTemplatesHash() => r'c2a3b0e6fcfcde35214d1e10feb451f7911eff58';
+String _$feedTemplatesHash() => r'ac9f6a374a73cb937b4e854066719c21c7033292';
 
 /// Formulation notifier for managing the formulation flow
 
@@ -163,7 +163,7 @@ final class FormulationNotifierProvider
         argument: null,
         retry: null,
         name: r'formulationProvider',
-        isAutoDispose: true,
+        isAutoDispose: false,
         dependencies: null,
         $allTransitiveDependencies: null,
       );
@@ -186,7 +186,7 @@ final class FormulationNotifierProvider
 }
 
 String _$formulationNotifierHash() =>
-    r'cb25ac26ae85d78c2af7160786cef229d7760607';
+    r'6ec7faf6936a3da9916336148fde0a4dae3f96b8';
 
 /// Formulation notifier for managing the formulation flow
 

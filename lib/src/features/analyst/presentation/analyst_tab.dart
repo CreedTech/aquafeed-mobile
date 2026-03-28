@@ -1,8 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../formulation/data/formulation_repository.dart';
@@ -15,25 +16,10 @@ class AnalystTab extends ConsumerStatefulWidget {
   ConsumerState<AnalystTab> createState() => _AnalystTabState();
 }
 
-class _ScenarioPreset {
-  final String label;
-  final String scenarioType;
-  final Map<String, dynamic>? parameters;
-
-  const _ScenarioPreset({
-    required this.label,
-    required this.scenarioType,
-    this.parameters,
-  });
-}
-
 class _AnalystTabState extends ConsumerState<AnalystTab> {
   final TextEditingController _messageController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
   final ScrollController _messagesController = ScrollController();
-  final NumberFormat _currency = NumberFormat.currency(
-    symbol: '₦',
-    decimalDigits: 2,
-  );
 
   List<AiThread> _threads = const [];
   List<AiChatMessage> _messages = const [];
@@ -42,40 +28,15 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
 
   String? _selectedThreadId;
   String? _selectedModelId;
-  bool _streamEnabled = true;
 
   bool _loadingThreads = true;
   bool _loadingMessages = false;
   bool _loadingModels = true;
   bool _sending = false;
-  bool _runningScenario = false;
-  bool _showQuickScenarios = false;
   bool _creatingThreadFromContext = false;
   String? _pageStatus;
   bool _pageStatusIsError = false;
   String? _lastAppliedContextIdentity;
-
-  final List<_ScenarioPreset> _presets = const [
-    _ScenarioPreset(
-      label: 'If maize price +10%',
-      scenarioType: 'maize_price_increase',
-      parameters: {'priceIncreasePct': 10},
-    ),
-    _ScenarioPreset(
-      label: 'If protein target +1%',
-      scenarioType: 'protein_target_increase',
-      parameters: {'deltaPct': 1},
-    ),
-    _ScenarioPreset(
-      label: 'If sorghum max = 15%',
-      scenarioType: 'sorghum_max',
-      parameters: {'maxPct': 15},
-    ),
-    _ScenarioPreset(
-      label: 'Try alternatives',
-      scenarioType: 'try_alternatives_expensive',
-    ),
-  ];
 
   @override
   void initState() {
@@ -86,6 +47,7 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
   @override
   void dispose() {
     _messageController.dispose();
+    _messageFocusNode.dispose();
     _messagesController.dispose();
     super.dispose();
   }
@@ -130,7 +92,6 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
     final nextModelId = _pickModelId(thread?.selectedModelId ?? _selectedModelId);
     setState(() {
       _selectedModelId = nextModelId;
-      _streamEnabled = thread?.streamEnabled ?? true;
     });
   }
 
@@ -140,6 +101,12 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
       _pageStatus = value?.trim().isEmpty == true ? null : value?.trim();
       _pageStatusIsError = isError;
     });
+  }
+
+  void _logAnalyst(String event, [Map<String, Object?> details = const {}]) {
+    if (!kDebugMode) return;
+    final suffix = details.isEmpty ? '' : ' $details';
+    debugPrint('[Analyst][$event]$suffix');
   }
 
   Future<void> _loadModels() async {
@@ -204,7 +171,6 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
         _selectedModelId = _pickModelId(
           selectedThread?.selectedModelId ?? _selectedModelId,
         );
-        _streamEnabled = selectedThread?.streamEnabled ?? true;
       });
 
       if (nextSelected != null) {
@@ -252,15 +218,15 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
   }
 
   void _upsertThread(AiThread updated) {
+    final exists = _threads.any((thread) => thread.id == updated.id);
     final updatedThreads = _threads.map((thread) {
       if (thread.id == updated.id) return updated;
       return thread;
     }).toList();
     setState(() {
-      _threads = updatedThreads;
+      _threads = exists ? updatedThreads : [updated, ...updatedThreads];
       _selectedThreadId = updated.id;
       _selectedModelId = _pickModelId(updated.selectedModelId);
-      _streamEnabled = updated.streamEnabled;
     });
   }
 
@@ -282,7 +248,6 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
         _selectedThreadId = thread.id;
         _messages = const [];
         _selectedModelId = _pickModelId(thread.selectedModelId);
-        _streamEnabled = thread.streamEnabled;
       });
       return thread.id;
     } catch (_) {
@@ -340,21 +305,65 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
     });
   }
 
-  List<AiSource> _parseSources(dynamic raw) {
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((item) => AiSource.fromJson(Map<String, dynamic>.from(item)))
-        .toList();
+  String _summarizeAssistantText(String text) {
+    final cleaned = text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (cleaned.isEmpty) return 'Formulation Assistant';
+    final firstSentence =
+        cleaned.split(RegExp(r'(?<=[.!?])\s+')).first.trim();
+    if (firstSentence.length <= 72) return firstSentence;
+    return '${firstSentence.substring(0, 69)}...';
+  }
+
+  void _syncThreadPreview({
+    required String threadId,
+    required AiChatMessage assistant,
+    AiThread? serverThread,
+  }) {
+    AiThread? existing;
+    for (final thread in _threads) {
+      if (thread.id == threadId) {
+        existing = thread;
+        break;
+      }
+    }
+    final fallback = existing ??
+        AiThread(
+          id: threadId,
+          title: 'Formulation Assistant',
+          archived: false,
+        );
+    final preview =
+        assistant.answerContent?.trim().isNotEmpty == true
+            ? assistant.answerContent!.trim()
+            : assistant.text.trim();
+    final summary = _summarizeAssistantText(preview);
+    final merged = (serverThread ?? fallback).copyWith(
+      title: (serverThread?.title.trim().isNotEmpty == true &&
+              serverThread!.title != 'Formulation Assistant')
+          ? serverThread.title
+          : (fallback.title == 'Formulation Assistant' ? summary : fallback.title),
+      firstQuestion: fallback.firstQuestion ?? summary,
+      firstAnswer: fallback.firstAnswer ?? preview,
+      lastMessageAt: assistant.createdAt ?? DateTime.now(),
+      lastMessageText: preview,
+      selectedModelId: serverThread?.selectedModelId ?? _selectedModelId,
+    );
+    _upsertThread(merged);
+  }
+
+  void _handleRedirectTarget(Map<String, dynamic>? redirectTarget) {
+    final targetType = redirectTarget?['type']?.toString() ?? 'none';
+    if (targetType == 'unlock_formulation' || targetType == 'open_formulation') {
+      context.push('/formulation');
+      return;
+    }
+    _messageFocusNode.requestFocus();
   }
 
   AiChatMessage _buildLocalAssistantMessage({
     required String id,
     required String threadId,
     required String text,
-    List<AiSource>? sources,
-    List<Map<String, dynamic>>? toolTrace,
-    String? reasoningSummary,
   }) {
     return AiChatMessage(
       id: id,
@@ -363,195 +372,58 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
       text: text,
       rawContent: text,
       answerContent: text,
-      thoughtProcess: reasoningSummary,
+      thoughtProcess: null,
       answerMarkdown: text,
       citations: const [],
       numericClaims: const [],
-      toolTrace: toolTrace ?? const [],
-      sources: sources ?? const [],
+      toolTrace: const [],
+      sources: const [],
       responseBlocks: const [],
       followUpPrompts: const [],
-      reasoningSummary: reasoningSummary,
+      reasoningSummary: null,
       modelId: _selectedModelId,
       createdAt: DateTime.now(),
     );
   }
 
-  void _showAiCostFromMeta(dynamic rawMeta) {}
-
-  Future<AiChatMessage?> _consumeJobStream({
-    required String jobId,
-    required String localAssistantId,
-    required String threadId,
-  }) async {
-    final repo = ref.read(formulationProvider.notifier);
-    var currentText = '';
-    var currentReasoning = '';
-    var currentSources = <AiSource>[];
-    var currentToolTrace = <Map<String, dynamic>>[];
-    var receivedAnswerDelta = false;
-
-    try {
-      await for (final event in repo.streamAiJob(jobId)) {
-        if (!mounted) return null;
-        switch (event.type) {
-          case 'delta':
-            if (receivedAnswerDelta) {
-              break;
-            }
-            final nextText = event.payload['currentText']?.toString();
-            final delta = event.payload['textDelta']?.toString() ?? '';
-            if (nextText != null && nextText.trim().isNotEmpty) {
-              currentText = nextText;
-            } else if (delta.trim().isNotEmpty) {
-              currentText = currentText.isEmpty ? delta.trim() : '$currentText ${delta.trim()}';
-            }
-            _replaceMessageById(
-              localAssistantId,
-              _buildLocalAssistantMessage(
-                id: localAssistantId,
-                threadId: threadId,
-                text: currentText,
-                sources: currentSources,
-                toolTrace: currentToolTrace,
-                reasoningSummary: currentReasoning.isEmpty ? null : currentReasoning,
-              ),
-            );
-            _scrollToBottom();
-            break;
-          case 'answer_delta':
-            receivedAnswerDelta = true;
-            final nextText = event.payload['currentText']?.toString();
-            final delta = event.payload['textDelta']?.toString() ?? '';
-            if (nextText != null && nextText.trim().isNotEmpty) {
-              currentText = nextText;
-            } else if (delta.trim().isNotEmpty) {
-              currentText = currentText.isEmpty ? delta.trim() : '$currentText ${delta.trim()}';
-            }
-            _replaceMessageById(
-              localAssistantId,
-              _buildLocalAssistantMessage(
-                id: localAssistantId,
-                threadId: threadId,
-                text: currentText,
-                sources: currentSources,
-                toolTrace: currentToolTrace,
-                reasoningSummary: currentReasoning.isEmpty ? null : currentReasoning,
-              ),
-            );
-            _scrollToBottom();
-            break;
-          case 'thought_delta':
-            final nextThought = event.payload['currentText']?.toString();
-            final delta = event.payload['textDelta']?.toString() ?? '';
-            if (nextThought != null && nextThought.trim().isNotEmpty) {
-              currentReasoning = nextThought;
-            } else if (delta.trim().isNotEmpty) {
-              currentReasoning = currentReasoning.isEmpty
-                  ? delta.trim()
-                  : '$currentReasoning ${delta.trim()}';
-            }
-            _replaceMessageById(
-              localAssistantId,
-              _buildLocalAssistantMessage(
-                id: localAssistantId,
-                threadId: threadId,
-                text: currentText,
-                sources: currentSources,
-                toolTrace: currentToolTrace,
-                reasoningSummary:
-                    currentReasoning.isEmpty ? null : currentReasoning,
-              ),
-            );
-            break;
-          case 'sources':
-            currentSources = _parseSources(event.payload['sources']);
-            _replaceMessageById(
-              localAssistantId,
-              _buildLocalAssistantMessage(
-                id: localAssistantId,
-                threadId: threadId,
-                text: currentText,
-                sources: currentSources,
-                toolTrace: currentToolTrace,
-                reasoningSummary: currentReasoning.isEmpty ? null : currentReasoning,
-              ),
-            );
-            break;
-          case 'tool_trace':
-            final trace = event.payload['toolTrace'] as List?;
-            currentToolTrace = (trace ?? const [])
-                .whereType<Map>()
-                .map((item) => Map<String, dynamic>.from(item))
-                .toList();
-            _replaceMessageById(
-              localAssistantId,
-              _buildLocalAssistantMessage(
-                id: localAssistantId,
-                threadId: threadId,
-                text: currentText,
-                sources: currentSources,
-                toolTrace: currentToolTrace,
-                reasoningSummary: currentReasoning.isEmpty ? null : currentReasoning,
-              ),
-            );
-            break;
-          case 'reasoning_summary':
-            currentReasoning =
-                event.payload['reasoningSummary']?.toString().trim() ?? '';
-            _replaceMessageById(
-              localAssistantId,
-              _buildLocalAssistantMessage(
-                id: localAssistantId,
-                threadId: threadId,
-                text: currentText,
-                sources: currentSources,
-                toolTrace: currentToolTrace,
-                reasoningSummary:
-                    currentReasoning.isEmpty ? null : currentReasoning,
-              ),
-            );
-            break;
-          case 'done':
-            final rawAssistant = event.payload['assistantMessage'];
-            _showAiCostFromMeta(event.payload['meta']);
-            if (rawAssistant is Map) {
-              final assistant = AiChatMessage.fromJson(
-                Map<String, dynamic>.from(rawAssistant),
-              );
-              _replaceMessageById(localAssistantId, assistant);
-              _scrollToBottom();
-              return assistant;
-            }
-            final fallback = _buildLocalAssistantMessage(
-              id: localAssistantId,
-              threadId: threadId,
-              text: currentText,
-              sources: currentSources,
-              toolTrace: currentToolTrace,
-              reasoningSummary:
-                  currentReasoning.isEmpty ? null : currentReasoning,
-            );
-            _replaceMessageById(localAssistantId, fallback);
-            _scrollToBottom();
-            return fallback;
-          case 'error':
-            return null;
-          default:
-            break;
-        }
+  String? _streamTextFromPayload(Map<String, dynamic> payload) {
+    final value =
+        payload['currentText'] ??
+        payload['text'] ??
+        payload['textDelta'] ??
+        payload['raw'];
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty || trimmed.toLowerCase() == '[object object]') {
+        return null;
       }
-      return null;
-    } catch (_) {
-      return null;
+      return value;
     }
+    if (value is num || value is bool) {
+      final text = value.toString().trim();
+      return text.isEmpty ? null : text;
+    }
+    return null;
   }
 
-  Future<AiChatMessage> _pollJobUntilComplete(String jobId) async {
+  Future<AiChatMessage> _pollJobUntilComplete(
+    String jobId, {
+    Duration timeout = const Duration(seconds: 90),
+    Duration interval = const Duration(milliseconds: 900),
+  }) async {
     final repo = ref.read(formulationProvider.notifier);
-    final deadline = DateTime.now().add(const Duration(seconds: 90));
+    final deadline = DateTime.now().add(timeout);
+    var pollCount = 0;
     while (DateTime.now().isBefore(deadline)) {
+      pollCount += 1;
       final status = await repo.getAiJobStatus(jobId);
+      _logAnalyst('job.poll', {
+        'jobId': jobId,
+        'poll': pollCount,
+        'status': status.status,
+        'hasAssistantMessage': status.assistantMessage != null,
+        'errorMessage': status.errorMessage,
+      });
       if (status.status == 'completed') {
         final message = status.assistantMessage;
         if (message != null) return message;
@@ -563,9 +435,90 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
       if (status.status == 'cancelled') {
         throw Exception('AI request cancelled');
       }
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future.delayed(interval);
     }
     throw Exception('AI response took too long. Please try again.');
+  }
+
+  Future<AiChatMessage> _streamJobUntilComplete({
+    required String jobId,
+    required String threadId,
+    required String localAssistantId,
+  }) async {
+    final repo = ref.read(formulationProvider.notifier);
+    var streamedAssistant = _buildLocalAssistantMessage(
+      id: localAssistantId,
+      threadId: threadId,
+      text: '',
+    );
+    AiChatMessage? finalFromDone;
+
+    try {
+      await for (final event in repo
+          .streamAiJob(jobId)
+          .timeout(const Duration(seconds: 75))) {
+        if (!mounted) {
+          throw Exception('Analyst chat is no longer active.');
+        }
+
+        switch (event.type) {
+          case 'thought_delta':
+            final thoughtText = _streamTextFromPayload(event.payload);
+            if (thoughtText == null) continue;
+            streamedAssistant = streamedAssistant.copyWith(
+              thoughtProcess: thoughtText,
+            );
+            _replaceMessageById(localAssistantId, streamedAssistant);
+            _scrollToBottom();
+            break;
+          case 'answer_delta':
+            final answerText = _streamTextFromPayload(event.payload);
+            if (answerText == null) continue;
+            streamedAssistant = streamedAssistant.copyWith(
+              text: answerText,
+              rawContent: answerText,
+              answerContent: answerText,
+              answerMarkdown: answerText,
+            );
+            _replaceMessageById(localAssistantId, streamedAssistant);
+            _scrollToBottom();
+            break;
+          case 'done':
+            if (event.payload['assistantMessage'] is Map) {
+              final assistantJson = Map<String, dynamic>.from(
+                event.payload['assistantMessage'] as Map,
+              );
+              finalFromDone = AiChatMessage.fromJson(assistantJson);
+            }
+            final status = await _pollJobUntilComplete(
+              jobId,
+              timeout: const Duration(seconds: 12),
+              interval: const Duration(milliseconds: 300),
+            );
+            return status;
+          case 'error':
+            final message =
+                event.payload['error']?.toString().trim().isNotEmpty == true
+                ? event.payload['error']!.toString().trim()
+                : 'AI request failed';
+            throw Exception(message);
+          default:
+            break;
+        }
+      }
+
+      if (finalFromDone != null) {
+        return finalFromDone;
+      }
+    } catch (error) {
+      final streamError = error.toString().replaceFirst('Exception: ', '').trim();
+      _logAnalyst('stream.failed', {
+        'jobId': jobId,
+        'error': streamError.isEmpty ? error.toString() : streamError,
+      });
+    }
+
+    return _pollJobUntilComplete(jobId);
   }
 
   Future<void> _sendMessage() async {
@@ -575,6 +528,15 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
     final thread = _selectedThread();
     final threadId = thread?.id;
     if (threadId == null) return;
+
+    _logAnalyst('send.start', {
+      'threadId': threadId,
+      'modelId': _selectedModelId,
+      'feedType': thread?.feedType,
+      'stageCode': thread?.stageCode,
+      'hasFormulationId': thread?.formulationId != null,
+      'message': message,
+    });
 
     final localUserMessage = AiChatMessage(
       id: 'local-user-${DateTime.now().millisecondsSinceEpoch}',
@@ -617,85 +579,72 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
         feedType: thread?.feedType,
         stageCode: thread?.stageCode,
         modelId: _selectedModelId,
-        stream: _streamEnabled,
+        stream: true,
       );
 
       if (!mounted) return;
       if (submit.thread != null) {
         _upsertThread(submit.thread!);
       }
+      _logAnalyst('send.accepted', {
+        'threadId': threadId,
+        'jobId': submit.jobId,
+        'requestId': submit.requestId,
+        'serverThreadReturned': submit.thread != null,
+      });
 
-      AiChatMessage? assistant;
-      if (_streamEnabled) {
-        assistant = await _consumeJobStream(
-          jobId: submit.jobId,
-          localAssistantId: localAssistantId,
-          threadId: threadId,
-        );
-      }
-
-      if (assistant == null) {
-        final polledAssistant = await _pollJobUntilComplete(submit.jobId);
-        if (!mounted) return;
-        _replaceMessageById(localAssistantId, polledAssistant);
-      }
-
-      await _loadThreads();
+      final assistant = await _streamJobUntilComplete(
+        jobId: submit.jobId,
+        threadId: threadId,
+        localAssistantId: localAssistantId,
+      );
+      if (!mounted) return;
+      _replaceMessageById(localAssistantId, assistant);
+      _syncThreadPreview(
+        threadId: threadId,
+        assistant: assistant,
+        serverThread: submit.thread,
+      );
+      _logAnalyst('send.completed', {
+        'threadId': threadId,
+        'jobId': assistant.jobId,
+        'policyStatus': assistant.policyStatus,
+        'verificationStatus': assistant.verificationStatus,
+        'groundingMode': assistant.groundingMode,
+        'answerPreview': (assistant.answerContent ?? assistant.text)
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim()
+            .substring(
+              0,
+              ((assistant.answerContent ?? assistant.text)
+                          .replaceAll(RegExp(r'\s+'), ' ')
+                          .trim()
+                          .length) >
+                      180
+                  ? 180
+                  : (assistant.answerContent ?? assistant.text)
+                      .replaceAll(RegExp(r'\s+'), ' ')
+                      .trim()
+                      .length,
+            ),
+      });
+      _scrollToBottom();
     } catch (error) {
       if (!mounted) return;
       _removeMessageById(localAssistantId);
       final msg = error.toString().replaceFirst('Exception: ', '').trim();
+      _logAnalyst('send.failed', {
+        'threadId': threadId,
+        'error': msg.isEmpty ? error.toString() : msg,
+      });
       _setPageStatus(
         msg.isEmpty ? 'Unable to send message to analyst.' : msg,
         isError: true,
       );
-      await _loadThreads();
     } finally {
       if (mounted) {
         setState(() {
           _sending = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _runScenario(_ScenarioPreset preset) async {
-    if (_runningScenario) return;
-    await _ensureActiveThread();
-    final thread = _selectedThread();
-    final threadId = thread?.id;
-    if (threadId == null) return;
-
-    setState(() {
-      _runningScenario = true;
-    });
-    try {
-      final repo = ref.read(formulationProvider.notifier);
-      final scenarioResult = await repo.runAiScenario(
-        threadId: threadId,
-        scenarioType: preset.scenarioType,
-        formulationId: thread?.formulationId,
-        feedType: thread?.feedType,
-        stageCode: thread?.stageCode,
-        parameters: preset.parameters,
-      );
-      if (!mounted) return;
-      await _loadThreads();
-      if (!mounted) return;
-      final delta = scenarioResult.scenario.costPerKgDelta;
-      final deltaText = delta == null ? '' : ' Δ/kg: ${_currency.format(delta)}';
-      _setPageStatus('${scenarioResult.scenario.title}$deltaText');
-    } catch (error) {
-      if (!mounted) return;
-      final msg = error.toString().replaceFirst('Exception: ', '').trim();
-      _setPageStatus(
-        msg.isEmpty ? 'Unable to run this scenario.' : msg,
-        isError: true,
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _runningScenario = false;
         });
       }
     }
@@ -707,6 +656,10 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
     setState(() {
       _selectedModelId = modelId;
     });
+    _logAnalyst('model.update.start', {
+      'threadId': threadId,
+      'modelId': modelId,
+    });
     try {
       final repo = ref.read(formulationProvider.notifier);
       final updated = await repo.updateAiThreadSettings(
@@ -715,37 +668,21 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
       );
       if (!mounted) return;
       _upsertThread(updated);
+      _logAnalyst('model.update.success', {
+        'threadId': threadId,
+        'modelId': updated.selectedModelId,
+      });
       _setPageStatus('Model updated for this chat.');
     } catch (error) {
       if (!mounted) return;
       final msg = error.toString().replaceFirst('Exception: ', '').trim();
+      _logAnalyst('model.update.failed', {
+        'threadId': threadId,
+        'modelId': modelId,
+        'error': msg.isEmpty ? error.toString() : msg,
+      });
       _setPageStatus(
         msg.isEmpty ? 'Unable to update model.' : msg,
-        isError: true,
-      );
-      _applySelectedThreadRuntime(_selectedThread());
-    }
-  }
-
-  Future<void> _updateStreamToggle(bool enabled) async {
-    final threadId = _selectedThreadId;
-    if (threadId == null || _sending) return;
-    setState(() {
-      _streamEnabled = enabled;
-    });
-    try {
-      final repo = ref.read(formulationProvider.notifier);
-      final updated = await repo.updateAiThreadSettings(
-        threadId: threadId,
-        streamEnabled: enabled,
-      );
-      if (!mounted) return;
-      _upsertThread(updated);
-    } catch (error) {
-      if (!mounted) return;
-      final msg = error.toString().replaceFirst('Exception: ', '').trim();
-      _setPageStatus(
-        msg.isEmpty ? 'Unable to update stream setting.' : msg,
         isError: true,
       );
       _applySelectedThreadRuntime(_selectedThread());
@@ -877,87 +814,57 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
           if (selectedThread != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: AppTheme.grey100,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppTheme.grey200),
-                      ),
-                      child: _loadingModels
-                          ? const SizedBox(
-                              height: 42,
-                              child: Center(
-                                child: SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.grey100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.grey200),
+                ),
+                child: _loadingModels
+                    ? const SizedBox(
+                        height: 42,
+                        child: Center(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        ),
+                      )
+                    : DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: _modelExists(_selectedModelId)
+                              ? _selectedModelId
+                              : null,
+                          hint: const Text('Select model'),
+                          icon: const Icon(Icons.expand_more_rounded),
+                          items: _modelOptions
+                              .map(
+                                (model) => DropdownMenuItem<String>(
+                                  value: model.id,
+                                  child: Text(
+                                    _prettyModelName(model),
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12),
                                   ),
                                 ),
-                              ),
-                            )
-                          : DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                isExpanded: true,
-                                value: _modelExists(_selectedModelId)
-                                    ? _selectedModelId
-                                    : null,
-                                hint: const Text('Select model'),
-                                icon: const Icon(Icons.expand_more_rounded),
-                                items: _modelOptions
-                                    .map(
-                                      (model) => DropdownMenuItem<String>(
-                                        value: model.id,
-                                        child: Text(
-                                          _prettyModelName(model),
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                                onChanged: (_sending || _modelOptions.isEmpty)
-                                    ? null
-                                    : (value) {
-                                        if (value == null ||
-                                            value == _selectedModelId) {
-                                          return;
-                                        }
-                                        _updateThreadModel(value);
-                                      },
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    height: 42,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: AppTheme.grey100,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppTheme.grey200),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'Stream',
-                          style: TextStyle(fontSize: 12),
+                              )
+                              .toList(),
+                          onChanged: (_sending || _modelOptions.isEmpty)
+                              ? null
+                              : (value) {
+                                  if (value == null ||
+                                      value == _selectedModelId) {
+                                    return;
+                                  }
+                                  _updateThreadModel(value);
+                                },
                         ),
-                        const SizedBox(width: 6),
-                        Switch.adaptive(
-                          value: _streamEnabled,
-                          onChanged: _sending ? null : _updateStreamToggle,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                      ),
               ),
             ),
           if (_pageStatus != null)
@@ -989,28 +896,20 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
                   : _messages.isEmpty
                   ? Center(
                       child: Text(
-                        'Start by asking a formulation or farm question.',
+                        'Ask about feed guidance, fish or poultry care, farm operations, or how to use AquaFeed.',
                         style: TextStyle(color: AppTheme.grey600, fontSize: 13),
                       ),
                     )
                   : ListView.builder(
                       controller: _messagesController,
                       padding: const EdgeInsets.fromLTRB(12, 14, 12, 16),
-                      itemCount: _messages.length + (_sending ? 1 : 0),
+                      itemCount: _messages.length,
                       itemBuilder: (context, index) {
-                        if (_sending && index == _messages.length) {
-                          return const Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding: EdgeInsets.only(bottom: 10),
-                              child: _TypingBubble(),
-                            ),
-                          );
-                        }
                         final message = _messages[index];
                         return _MessageBubble(
                           message: message,
                           onPromptTap: _onPromptTap,
+                          onRedirectTap: _handleRedirectTarget,
                         );
                       },
                     ),
@@ -1024,66 +923,19 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
             ),
             child: Column(
               children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => setState(() {
-                      _showQuickScenarios = !_showQuickScenarios;
-                    }),
-                    icon: Icon(
-                      _showQuickScenarios
-                          ? Icons.expand_less
-                          : Icons.auto_graph_outlined,
-                      size: 16,
-                    ),
-                    label: Text(
-                      _showQuickScenarios
-                          ? 'Hide quick scenarios'
-                          : 'Show quick scenarios',
-                    ),
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                    ),
-                  ),
-                ),
-                if (_showQuickScenarios) ...[
-                  const SizedBox(height: 4),
-                  SizedBox(
-                    height: 38,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _presets.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final preset = _presets[index];
-                        return ActionChip(
-                          onPressed: _runningScenario
-                              ? null
-                              : () => _runScenario(preset),
-                          label: Text(
-                            preset.label,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          avatar: const Icon(Icons.auto_graph, size: 16),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
                       child: TextField(
                         controller: _messageController,
+                        focusNode: _messageFocusNode,
                         minLines: 1,
                         maxLines: 4,
                         textInputAction: TextInputAction.send,
                         onSubmitted: (_) => _sendMessage(),
                         decoration: InputDecoration(
                           hintText:
-                              'Ask about feed quality, farm decisions, or mix cost...',
+                              'Ask about feed quality, farm decisions, or AquaFeed help...',
                           filled: true,
                           fillColor: AppTheme.grey100,
                           border: OutlineInputBorder(
@@ -1154,16 +1006,23 @@ class _AnalystTabState extends ConsumerState<AnalystTab> {
 class _MessageBubble extends StatelessWidget {
   final AiChatMessage message;
   final ValueChanged<String>? onPromptTap;
+  final ValueChanged<Map<String, dynamic>?>? onRedirectTap;
 
-  const _MessageBubble({required this.message, this.onPromptTap});
+  const _MessageBubble({
+    required this.message,
+    this.onPromptTap,
+    this.onRedirectTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
     final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final bubbleColor = isUser ? AppTheme.primary : AppTheme.grey100;
+    final bubbleColor = isUser ? AppTheme.primary : Colors.white;
     final textColor = isUser ? Colors.white : AppTheme.black;
-    final thoughtText = (message.thoughtProcess ?? message.reasoningSummary)?.trim();
+    final thoughtText = _sanitizeThoughtText(
+      (message.thoughtProcess ?? message.reasoningSummary)?.trim(),
+    );
     final body = !isUser &&
             message.answerContent != null &&
             message.answerContent!.trim().isNotEmpty
@@ -1178,6 +1037,38 @@ class _MessageBubble extends StatelessWidget {
         fallbackText != null &&
         fallbackText.isNotEmpty &&
         fallbackText != body.trim();
+    final showVerificationChip = !isUser &&
+        (message.groundingMode == 'system_verified' ||
+            message.groundingMode == 'deterministic_formulation') &&
+        (message.verificationStatus == 'passed' ||
+            message.verificationStatus == 'failed');
+    final visiblePrompts = !isUser
+        ? message.followUpPrompts
+              .map(_sanitizePromptText)
+              .whereType<String>()
+              .toList()
+        : const <String>[];
+    final visibleResponseBlocks = !isUser
+        ? message.responseBlocks.where((block) {
+            if (_isRedundantSummaryBlock(block, body)) return false;
+            if (_isVerifiedNumbersBlock(block)) return false;
+            return true;
+          }).toList()
+        : const <AiResponseBlock>[];
+
+    if (!isUser &&
+        body.trim().isEmpty &&
+        visibleResponseBlocks.isEmpty &&
+        visiblePrompts.isEmpty &&
+        !shouldShowFallback) {
+      return Align(
+        alignment: alignment,
+        child: const Padding(
+          padding: EdgeInsets.only(bottom: 10),
+          child: _TypingBubble(),
+        ),
+      );
+    }
 
     return Align(
       alignment: alignment,
@@ -1188,21 +1079,38 @@ class _MessageBubble extends StatelessWidget {
         decoration: BoxDecoration(
           color: bubbleColor,
           borderRadius: BorderRadius.circular(14),
+          border: isUser ? null : Border.all(color: AppTheme.grey200),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              body,
-              style: TextStyle(color: textColor, fontSize: 13, height: 1.45),
-            ),
-            if (!isUser && message.responseBlocks.isNotEmpty) ...[
+            if (!isUser && message.policyStatus != 'allowed') ...[
+              _PolicyNoticeCard(
+                policyStatus: message.policyStatus,
+                policyReason: message.policyReason,
+                redirectTarget: message.redirectTarget,
+                onRedirectTap: onRedirectTap,
+              ),
+              if (body.trim().isNotEmpty) const SizedBox(height: 10),
+            ],
+            if (body.trim().isNotEmpty)
+              isUser
+                  ? Text(
+                      body,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 13,
+                        height: 1.45,
+                      ),
+                    )
+                  : _MiniMarkdownBody(text: body, color: textColor),
+            if (!isUser && visibleResponseBlocks.isNotEmpty) ...[
               const SizedBox(height: 8),
-              ...message.responseBlocks.take(3).map(
+              ...visibleResponseBlocks.take(3).map(
                 (block) => _ResponseBlockCard(block: block),
               ),
             ],
-            if (!isUser && message.verificationStatus != null) ...[
+            if (showVerificationChip) ...[
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1237,7 +1145,7 @@ class _MessageBubble extends StatelessWidget {
                   tilePadding: EdgeInsets.zero,
                   childrenPadding: EdgeInsets.zero,
                   title: const Text(
-                    'Reasoning Summary',
+                    'Thought Process',
                     style: TextStyle(
                       fontSize: 11,
                       color: AppTheme.grey600,
@@ -1252,110 +1160,21 @@ class _MessageBubble extends StatelessWidget {
                   children: [
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        thoughtText,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.grey600,
-                          height: 1.4,
-                        ),
+                      child: _MiniMarkdownBody(
+                        text: thoughtText,
+                        color: AppTheme.grey600,
+                        fontSize: 11,
                       ),
                     ),
                   ],
                 ),
               ),
             ],
-            if (!isUser && message.toolTrace.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Theme(
-                data: Theme.of(context).copyWith(
-                  dividerColor: Colors.transparent,
-                  splashColor: Colors.transparent,
-                ),
-                child: ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: EdgeInsets.zero,
-                  title: const Text(
-                    'Diagnostics',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AppTheme.grey600,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  trailing: const Icon(
-                    Icons.expand_more,
-                    size: 18,
-                    color: AppTheme.grey600,
-                  ),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: message.toolTrace.take(8).map((entry) {
-                          final name = entry['name']?.toString() ?? 'tool';
-                          final status = entry['status']?.toString() ?? '';
-                          final type = entry['type']?.toString() ?? '';
-                          final detail = [type, name, status]
-                              .where((part) => part.trim().isNotEmpty)
-                              .join(' • ');
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              '• $detail',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: AppTheme.grey600,
-                                height: 1.4,
-                              ),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            if (!isUser && message.numericClaims.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ...message.numericClaims.take(5).map(
-                (claim) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '${claim.label}: ${_formatClaimValue(claim.value)}${claim.unit == null ? '' : ' ${claim.unit}'}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppTheme.grey600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            if (!isUser && message.sources.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ...message.sources.take(3).map((source) {
-                final title = source.title?.trim().isNotEmpty == true
-                    ? source.title!.trim()
-                    : (source.reference ?? source.type ?? 'Source');
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '• $title',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppTheme.grey600,
-                    ),
-                  ),
-                );
-              }),
-            ],
-            if (!isUser && message.followUpPrompts.isNotEmpty) ...[
+            if (!isUser && visiblePrompts.isNotEmpty) ...[
               const SizedBox(height: 8),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: message.followUpPrompts.take(3).map((prompt) {
+                children: visiblePrompts.take(3).map((prompt) {
                   final canTap = onPromptTap != null;
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 4),
@@ -1369,7 +1188,9 @@ class _MessageBubble extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 11,
                             color: canTap ? AppTheme.primary : AppTheme.grey600,
-                            decoration: canTap ? TextDecoration.underline : TextDecoration.none,
+                            decoration: canTap
+                                ? TextDecoration.underline
+                                : TextDecoration.none,
                             decorationColor: AppTheme.primary,
                           ),
                         ),
@@ -1380,10 +1201,20 @@ class _MessageBubble extends StatelessWidget {
               ),
             ],
             if (shouldShowFallback) ...[
-              const SizedBox(height: 6),
-              Text(
-                fallbackText,
-                style: const TextStyle(fontSize: 11, color: AppTheme.warning),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppTheme.warning.withValues(alpha: 0.24),
+                  ),
+                ),
+                child: Text(
+                  fallbackText,
+                  style: const TextStyle(fontSize: 11, color: AppTheme.warning),
+                ),
               ),
             ],
           ],
@@ -1392,14 +1223,155 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  String _formatClaimValue(double value) {
-    if (value == value.roundToDouble()) {
-      return value.toStringAsFixed(0);
+  String? _sanitizeThoughtText(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final cleaned = value
+        .split('\n')
+        .map((line) => line.trim())
+        .where(
+          (line) =>
+              line.isNotEmpty && line.toLowerCase() != '[object object]',
+        )
+        .join('\n')
+        .trim();
+    return cleaned.isEmpty ? null : cleaned;
+  }
+
+  String? _sanitizePromptText(String? value) {
+    if (value == null) return null;
+    final cleaned = value.trim();
+    if (cleaned.isEmpty || cleaned.toLowerCase() == '[object object]') {
+      return null;
     }
-    if (value.abs() >= 1000) {
-      return value.toStringAsFixed(2);
+    return cleaned;
+  }
+
+  bool _isRedundantSummaryBlock(AiResponseBlock block, String body) {
+    if (block.type != 'summary') return false;
+    final blockTitle = block.title?.trim().toLowerCase() ?? '';
+    final normalizedBlock = (block.content ?? '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .toLowerCase();
+    final normalizedBody = body.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+    if (blockTitle == 'assistant summary') return true;
+    return normalizedBlock.isNotEmpty && normalizedBlock == normalizedBody;
+  }
+
+  bool _isVerifiedNumbersBlock(AiResponseBlock block) {
+    final title = block.title?.trim().toLowerCase() ?? '';
+    if (block.type == 'numbers_table' && title == 'verified numbers') {
+      return true;
     }
-    return value.toStringAsFixed(3);
+    final rows = block.rows;
+    if (rows.isEmpty) return false;
+    return rows.every((row) {
+      final keys = row.keys.map((key) => key.toLowerCase()).toSet();
+      return keys.contains('metric') && keys.contains('value');
+    }) && title.contains('verified');
+  }
+}
+
+class _PolicyNoticeCard extends StatelessWidget {
+  final String policyStatus;
+  final String? policyReason;
+  final Map<String, dynamic>? redirectTarget;
+  final ValueChanged<Map<String, dynamic>?>? onRedirectTap;
+
+  const _PolicyNoticeCard({
+    required this.policyStatus,
+    this.policyReason,
+    this.redirectTarget,
+    this.onRedirectTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isBlocked = policyStatus == 'blocked';
+    final title = isBlocked
+        ? 'Exact Formulation Is Locked'
+        : 'Supported Topics Only';
+    final body = isBlocked
+        ? 'Exact formulations, ingredient percentages, kg allocations, and costed mix outputs are only available in the paid formulation workflow.'
+        : 'This assistant is for feed guidance, fish and poultry management, farm operations, and AquaFeed app help.';
+    final buttonLabel = _buttonLabel();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: isBlocked
+            ? AppTheme.warning.withValues(alpha: 0.08)
+            : AppTheme.grey100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isBlocked
+              ? AppTheme.warning.withValues(alpha: 0.24)
+              : AppTheme.grey200,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isBlocked ? Icons.lock_outline_rounded : Icons.info_outline,
+                size: 16,
+                color: isBlocked ? AppTheme.warning : AppTheme.grey600,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isBlocked ? AppTheme.warning : AppTheme.black,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            body,
+            style: const TextStyle(
+              fontSize: 11,
+              color: AppTheme.grey600,
+              height: 1.4,
+            ),
+          ),
+          if (buttonLabel != null && onRedirectTap != null) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => onRedirectTap!(redirectTarget),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(buttonLabel),
+            ),
+          ],
+        ],
+        ),
+    );
+  }
+
+  String? _buttonLabel() {
+    final type = redirectTarget?['type']?.toString() ?? 'none';
+    switch (type) {
+      case 'unlock_formulation':
+        return 'Open formulation';
+      case 'open_formulation':
+        return 'Go to formulation';
+      case 'supported_topics':
+        return 'Focus supported topics';
+      default:
+        return null;
+    }
   }
 }
 
@@ -1415,7 +1387,7 @@ class _ResponseBlockCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.65),
+        color: AppTheme.grey100.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppTheme.grey200),
       ),
@@ -1434,38 +1406,431 @@ class _ResponseBlockCard extends StatelessWidget {
           if (block.content != null && block.content!.trim().isNotEmpty) ...[
             if (block.title != null && block.title!.trim().isNotEmpty)
               const SizedBox(height: 4),
-            Text(
-              block.content!,
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppTheme.grey600,
-                height: 1.4,
-              ),
+            _MiniMarkdownBody(
+              text: block.content!,
+              color: AppTheme.grey600,
+              fontSize: 11,
             ),
           ],
           if (block.rows.isNotEmpty) ...[
             const SizedBox(height: 6),
             ...block.rows.take(6).map((row) {
-              final entries = row.entries.toList();
+              final entries = row.entries
+                  .where((entry) => entry.key.toLowerCase() != 'factid')
+                  .toList();
               if (entries.isEmpty) return const SizedBox.shrink();
-              final first = entries.first;
-              final second = entries.length > 1 ? entries[1] : null;
-              final left = '${first.key}: ${first.value}';
-              final right = second == null ? '' : '${second.key}: ${second.value}';
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  right.isEmpty ? left : '$left • $right',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.grey600,
-                    height: 1.35,
-                  ),
+              return Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.grey200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: entries.take(4).map((entry) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: RichText(
+                        text: TextSpan(
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.grey600,
+                            height: 1.35,
+                          ),
+                          children: [
+                            TextSpan(
+                              text: '${_humanizeKey(entry.key)}: ',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.black,
+                              ),
+                            ),
+                            TextSpan(text: '${entry.value}'),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
               );
             }),
           ],
         ],
+      ),
+    );
+  }
+
+  String _humanizeKey(String key) {
+    return key
+        .replaceAll('_', ' ')
+        .replaceAllMapped(
+          RegExp(r'([a-z])([A-Z])'),
+          (match) => '${match.group(1)} ${match.group(2)}',
+        )
+        .trim();
+  }
+}
+
+class _MiniMarkdownBody extends StatelessWidget {
+  final String text;
+  final Color color;
+  final double fontSize;
+
+  const _MiniMarkdownBody({
+    required this.text,
+    required this.color,
+    this.fontSize = 13,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.replaceAll('\r\n', '\n').split('\n');
+    final children = <Widget>[];
+    var index = 0;
+
+    while (index < lines.length) {
+      final trimmed = lines[index].trimRight();
+      final clean = trimmed.trim();
+
+      if (clean.isEmpty) {
+        if (children.isNotEmpty && children.last is! SizedBox) {
+          children.add(const SizedBox(height: 8));
+        }
+        index += 1;
+        continue;
+      }
+
+      if (_isTableLine(clean)) {
+        final tableLines = <String>[];
+        while (index < lines.length && _isTableLine(lines[index].trim())) {
+          tableLines.add(lines[index].trim());
+          index += 1;
+        }
+        children.add(_MarkdownTable(lines: tableLines));
+        children.add(const SizedBox(height: 8));
+        continue;
+      }
+
+      if (_isListLine(clean)) {
+        final listLines = <String>[];
+        while (index < lines.length && _isListLine(lines[index].trim())) {
+          listLines.add(lines[index].trim());
+          index += 1;
+        }
+        children.addAll(
+          listLines.map(
+            (line) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: _MarkdownListItem(
+                line: line,
+                color: color,
+                fontSize: fontSize,
+              ),
+            ),
+          ),
+        );
+        children.add(const SizedBox(height: 4));
+        continue;
+      }
+
+      if (clean.startsWith('#')) {
+        final level = clean.split('').takeWhile((char) => char == '#').length;
+        final heading = clean.substring(level).trim();
+        children.add(
+          RichText(
+            text: _inlineSpan(
+              heading,
+              TextStyle(
+                color: AppTheme.black,
+                fontSize: level <= 1
+                    ? fontSize + 4
+                    : level == 2
+                    ? fontSize + 2
+                    : fontSize + 1,
+                fontWeight: FontWeight.w800,
+                height: 1.35,
+              ),
+            ),
+          ),
+        );
+        children.add(const SizedBox(height: 6));
+        index += 1;
+        continue;
+      }
+
+      final paragraphLines = <String>[];
+      while (index < lines.length) {
+        final current = lines[index].trim();
+        if (current.isEmpty ||
+            _isTableLine(current) ||
+            _isListLine(current) ||
+            current.startsWith('#')) {
+          break;
+        }
+        paragraphLines.add(current);
+        index += 1;
+      }
+      final paragraph = paragraphLines.join(' ');
+      children.add(
+        RichText(
+          text: _inlineSpan(
+            paragraph,
+            TextStyle(
+              color: color,
+              fontSize: fontSize,
+              height: 1.45,
+            ),
+          ),
+        ),
+      );
+      children.add(const SizedBox(height: 8));
+    }
+
+    while (children.isNotEmpty && children.last is SizedBox) {
+      children.removeLast();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+
+  bool _isListLine(String line) {
+    return line.startsWith('- ') ||
+        line.startsWith('* ') ||
+        RegExp(r'^\d+\.\s+').hasMatch(line);
+  }
+
+  bool _isTableLine(String line) {
+    return line.startsWith('|') && line.endsWith('|') && line.contains('|');
+  }
+
+  InlineSpan _inlineSpan(String input, TextStyle baseStyle) {
+    final pattern = RegExp(r'(\*\*.+?\*\*|`.+?`)');
+    final matches = pattern.allMatches(input);
+    if (matches.isEmpty) {
+      return TextSpan(text: input, style: baseStyle);
+    }
+
+    final children = <InlineSpan>[];
+    var last = 0;
+    for (final match in matches) {
+      if (match.start > last) {
+        children.add(
+          TextSpan(
+            text: input.substring(last, match.start),
+            style: baseStyle,
+          ),
+        );
+      }
+      final token = match.group(0) ?? '';
+      if (token.startsWith('**')) {
+        children.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: baseStyle.copyWith(fontWeight: FontWeight.w700),
+          ),
+        );
+      } else {
+        children.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: baseStyle.copyWith(
+              fontFamily: 'monospace',
+              backgroundColor: AppTheme.grey100,
+            ),
+          ),
+        );
+      }
+      last = match.end;
+    }
+    if (last < input.length) {
+      children.add(
+        TextSpan(text: input.substring(last), style: baseStyle),
+      );
+    }
+    return TextSpan(children: children, style: baseStyle);
+  }
+}
+
+class _MarkdownListItem extends StatelessWidget {
+  final String line;
+  final Color color;
+  final double fontSize;
+
+  const _MarkdownListItem({
+    required this.line,
+    required this.color,
+    required this.fontSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final match = RegExp(r'^(\d+\.)\s+(.*)$').firstMatch(line);
+    final prefix = match != null
+        ? '${match.group(1)} '
+        : (line.startsWith('* ') ? '• ' : '• ');
+    final body = match != null ? (match.group(2) ?? '') : line.substring(2).trim();
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          prefix,
+          style: TextStyle(
+            color: color,
+            fontSize: fontSize,
+            height: 1.45,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: TextStyle(
+                color: color,
+                fontSize: fontSize,
+                height: 1.45,
+              ),
+              children: [_inlineTextSpan(body, color, fontSize)],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  InlineSpan _inlineTextSpan(String input, Color color, double fontSize) {
+    final pattern = RegExp(r'(\*\*.+?\*\*|`.+?`)');
+    final matches = pattern.allMatches(input);
+    final baseStyle = TextStyle(color: color, fontSize: fontSize, height: 1.45);
+    if (matches.isEmpty) {
+      return TextSpan(text: input, style: baseStyle);
+    }
+
+    final children = <InlineSpan>[];
+    var last = 0;
+    for (final match in matches) {
+      if (match.start > last) {
+        children.add(TextSpan(text: input.substring(last, match.start), style: baseStyle));
+      }
+      final token = match.group(0) ?? '';
+      if (token.startsWith('**')) {
+        children.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: baseStyle.copyWith(fontWeight: FontWeight.w700),
+          ),
+        );
+      } else {
+        children.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: baseStyle.copyWith(
+              fontFamily: 'monospace',
+              backgroundColor: AppTheme.grey100,
+            ),
+          ),
+        );
+      }
+      last = match.end;
+    }
+    if (last < input.length) {
+      children.add(TextSpan(text: input.substring(last), style: baseStyle));
+    }
+    return TextSpan(children: children, style: baseStyle);
+  }
+}
+
+class _MarkdownTable extends StatelessWidget {
+  final List<String> lines;
+
+  const _MarkdownTable({required this.lines});
+
+  @override
+  Widget build(BuildContext context) {
+    final parsedRows = lines
+        .map(
+          (line) => line
+              .split('|')
+              .map((cell) => cell.trim())
+              .where((cell) => cell.isNotEmpty)
+              .toList(),
+        )
+        .where((row) => row.isNotEmpty)
+        .toList();
+    if (parsedRows.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final hasSeparator = parsedRows.length > 1 &&
+        parsedRows[1].every((cell) => RegExp(r'^:?-{2,}:?$').hasMatch(cell));
+    final header = parsedRows.first;
+    final rows = hasSeparator ? parsedRows.skip(2).toList() : parsedRows.skip(1).toList();
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppTheme.grey100,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.grey200),
+      ),
+      child: Column(
+        children: [
+          _MarkdownTableRow(cells: header, isHeader: true),
+          ...rows.map((row) => _MarkdownTableRow(cells: row)),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarkdownTableRow extends StatelessWidget {
+  final List<String> cells;
+  final bool isHeader;
+
+  const _MarkdownTableRow({
+    required this.cells,
+    this.isHeader = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isHeader ? Colors.white : Colors.transparent,
+        border: Border(
+          bottom: BorderSide(
+            color: AppTheme.grey200,
+            width: 0.8,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: cells.map((cell) {
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: Text(
+                cell,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.35,
+                  fontWeight: isHeader ? FontWeight.w700 : FontWeight.w500,
+                  color: isHeader ? AppTheme.black : AppTheme.grey600,
+                ),
+              ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -1479,8 +1844,9 @@ class _TypingBubble extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: AppTheme.grey100,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.grey200),
       ),
       child: const SizedBox(
         width: 40,

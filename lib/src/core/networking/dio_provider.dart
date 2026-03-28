@@ -9,6 +9,14 @@ import '../../features/auth/data/auth_repository.dart';
 
 part 'dio_provider.g.dart';
 
+String _logPreview(Object? value, {int maxLength = 320}) {
+  if (value == null) return 'null';
+  final raw = value is String ? value : value.toString();
+  final compact = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (compact.length <= maxLength) return compact;
+  return '${compact.substring(0, maxLength)}...';
+}
+
 @riverpod
 Future<PersistCookieJar> cookieJar(Ref ref) async {
   final appDocDir = await getApplicationDocumentsDirectory();
@@ -49,13 +57,24 @@ Future<Dio> dio(Ref ref) async {
     InterceptorsWrapper(
       onRequest: (options, handler) {
         debugPrint('--- Dio Request ---');
+        debugPrint('Method: ${options.method}');
         debugPrint('Url: ${options.uri}');
+        if (options.queryParameters.isNotEmpty) {
+          debugPrint('Query: ${_logPreview(options.queryParameters)}');
+        }
+        if (options.data != null) {
+          debugPrint('Body: ${_logPreview(options.data)}');
+        }
         debugPrint('-------------------');
         return handler.next(options);
       },
       onResponse: (response, handler) {
         debugPrint('--- Dio Response ---');
         debugPrint('Status: ${response.statusCode}');
+        debugPrint('Url: ${response.requestOptions.uri}');
+        if (response.data != null) {
+          debugPrint('Body: ${_logPreview(response.data)}');
+        }
         debugPrint('--------------------');
         return handler.next(response);
       },
@@ -71,9 +90,13 @@ Future<Dio> dio(Ref ref) async {
 
         if (e.response?.statusCode != 401) {
           debugPrint('--- Dio Error ---');
+          debugPrint('Method: ${e.requestOptions.method}');
           debugPrint('Url: ${e.requestOptions.uri}');
           debugPrint('Status: ${e.response?.statusCode}');
           debugPrint('Body: ${e.response?.data}');
+          if (e.message != null && e.message!.trim().isNotEmpty) {
+            debugPrint('Message: ${e.message}');
+          }
           debugPrint('-----------------');
         }
         return handler.next(e);

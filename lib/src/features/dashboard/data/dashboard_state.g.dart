@@ -44,7 +44,7 @@ final class DashboardTabIndexProvider
   }
 }
 
-String _$dashboardTabIndexHash() => r'217697f3900ec1a792f6f91b9a3159a04bc4735d';
+String _$dashboardTabIndexHash() => r'226bc760a9d46d12295bc671623ff09cbaa28519';
 
 /// Controls the currently selected tab index in the dashboard
 

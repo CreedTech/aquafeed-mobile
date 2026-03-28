@@ -43,6 +43,42 @@ String _extractApiErrorMessage(
   return text.isEmpty ? fallback : text;
 }
 
+String? _extractStructuredText(
+  dynamic value, {
+  List<String> keys = const ['prompt', 'text', 'label', 'action', 'title', 'content'],
+}) {
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || trimmed.toLowerCase() == '[object object]') {
+      return null;
+    }
+    return trimmed;
+  }
+  if (value is num || value is bool) {
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+  if (value is Map) {
+    for (final key in keys) {
+      final candidate = _extractStructuredText(value[key], keys: keys);
+      if (candidate != null && candidate.isNotEmpty) return candidate;
+    }
+  }
+  return null;
+}
+
+List<String> _extractStructuredTextList(dynamic value) {
+  if (value is! List) return const [];
+  final seen = <String>{};
+  final items = <String>[];
+  for (final item in value) {
+    final text = _extractStructuredText(item);
+    if (text == null || text.isEmpty || !seen.add(text)) continue;
+    items.add(text);
+  }
+  return items;
+}
+
 /// Exception thrown when payment is required for access
 class PaymentRequiredException implements Exception {
   final String message;
@@ -321,8 +357,12 @@ class AiAnalystResult {
   final String answer;
   final List<String> citations;
   final List<AiNumericClaim> numericClaims;
-  final String verificationStatus; // passed | failed
+  final String verificationStatus; // passed | failed | not_applicable
   final String? fallbackMessage;
+  final String policyStatus;
+  final String? policyReason;
+  final Map<String, dynamic>? redirectTarget;
+  final String? groundingMode;
   final String? modelUsed;
   final double? estimatedCostUsd;
   final double? estimatedCostNgn;
@@ -334,6 +374,10 @@ class AiAnalystResult {
     required this.numericClaims,
     required this.verificationStatus,
     this.fallbackMessage,
+    this.policyStatus = 'allowed',
+    this.policyReason,
+    this.redirectTarget,
+    this.groundingMode,
     this.modelUsed,
     this.estimatedCostUsd,
     this.estimatedCostNgn,
@@ -354,6 +398,12 @@ class AiAnalystResult {
       numericClaims: claims,
       verificationStatus: json['verificationStatus']?.toString() ?? 'failed',
       fallbackMessage: json['fallbackMessage']?.toString(),
+      policyStatus: json['policyStatus']?.toString() ?? 'allowed',
+      policyReason: json['policyReason']?.toString(),
+      redirectTarget: json['redirectTarget'] is Map
+          ? Map<String, dynamic>.from(json['redirectTarget'])
+          : null,
+      groundingMode: json['groundingMode']?.toString(),
       modelUsed: (json['meta'] as Map?)?['modelUsed']?.toString(),
       estimatedCostUsd: ((json['meta'] as Map?)?['estimatedCostUsd'] as num?)
           ?.toDouble(),
@@ -392,6 +442,33 @@ class AiThread {
     this.feedType,
     this.stageCode,
   });
+
+  AiThread copyWith({
+    String? title,
+    bool? archived,
+    String? firstQuestion,
+    String? firstAnswer,
+    String? selectedModelId,
+    bool? streamEnabled,
+    DateTime? lastMessageAt,
+    String? lastMessageText,
+    String? formulationId,
+    String? feedType,
+    String? stageCode,
+  }) => AiThread(
+    id: id,
+    title: title ?? this.title,
+    archived: archived ?? this.archived,
+    firstQuestion: firstQuestion ?? this.firstQuestion,
+    firstAnswer: firstAnswer ?? this.firstAnswer,
+    selectedModelId: selectedModelId ?? this.selectedModelId,
+    streamEnabled: streamEnabled ?? this.streamEnabled,
+    lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+    lastMessageText: lastMessageText ?? this.lastMessageText,
+    formulationId: formulationId ?? this.formulationId,
+    feedType: feedType ?? this.feedType,
+    stageCode: stageCode ?? this.stageCode,
+  );
 
   factory AiThread.fromJson(Map<String, dynamic> json) {
     final lastMessage = json['lastMessage'] as Map<String, dynamic>?;
@@ -457,8 +534,10 @@ class AiResponseBlock {
         .toList();
     return AiResponseBlock(
       type: json['type']?.toString() ?? 'summary',
-      title: json['title']?.toString(),
-      content: json['content']?.toString(),
+      title: _extractStructuredText(json['title']) ??
+          _extractStructuredText(json['heading']),
+      content: _extractStructuredText(json['content']) ??
+          _extractStructuredText(json['text']),
       rows: rows,
     );
   }
@@ -486,6 +565,10 @@ class AiChatMessage {
   final String? modelId;
   final String? verificationStatus;
   final String? fallbackMessage;
+  final String policyStatus;
+  final String? policyReason;
+  final Map<String, dynamic>? redirectTarget;
+  final String? groundingMode;
   final Map<String, dynamic>? scenario;
   final DateTime? createdAt;
 
@@ -511,11 +594,72 @@ class AiChatMessage {
     this.modelId,
     this.verificationStatus,
     this.fallbackMessage,
+    this.policyStatus = 'allowed',
+    this.policyReason,
+    this.redirectTarget,
+    this.groundingMode,
     this.scenario,
     this.createdAt,
   });
 
   bool get isUser => role.toLowerCase() == 'user';
+
+  AiChatMessage copyWith({
+    String? text,
+    String? rawContent,
+    String? answerContent,
+    String? thoughtProcess,
+    String? answerMarkdown,
+    List<String>? citations,
+    List<AiNumericClaim>? numericClaims,
+    List<Map<String, dynamic>>? toolTrace,
+    List<AiSource>? sources,
+    List<AiResponseBlock>? responseBlocks,
+    List<String>? followUpPrompts,
+    double? confidence,
+    String? reasoningSummary,
+    String? requestId,
+    String? jobId,
+    String? modelId,
+    String? verificationStatus,
+    String? fallbackMessage,
+    String? policyStatus,
+    String? policyReason,
+    Map<String, dynamic>? redirectTarget,
+    String? groundingMode,
+    Map<String, dynamic>? scenario,
+    DateTime? createdAt,
+  }) {
+    return AiChatMessage(
+      id: id,
+      conversationId: conversationId,
+      role: role,
+      text: text ?? this.text,
+      rawContent: rawContent ?? this.rawContent,
+      answerContent: answerContent ?? this.answerContent,
+      thoughtProcess: thoughtProcess ?? this.thoughtProcess,
+      answerMarkdown: answerMarkdown ?? this.answerMarkdown,
+      citations: citations ?? this.citations,
+      numericClaims: numericClaims ?? this.numericClaims,
+      toolTrace: toolTrace ?? this.toolTrace,
+      sources: sources ?? this.sources,
+      responseBlocks: responseBlocks ?? this.responseBlocks,
+      followUpPrompts: followUpPrompts ?? this.followUpPrompts,
+      confidence: confidence ?? this.confidence,
+      reasoningSummary: reasoningSummary ?? this.reasoningSummary,
+      requestId: requestId ?? this.requestId,
+      jobId: jobId ?? this.jobId,
+      modelId: modelId ?? this.modelId,
+      verificationStatus: verificationStatus ?? this.verificationStatus,
+      fallbackMessage: fallbackMessage ?? this.fallbackMessage,
+      policyStatus: policyStatus ?? this.policyStatus,
+      policyReason: policyReason ?? this.policyReason,
+      redirectTarget: redirectTarget ?? this.redirectTarget,
+      groundingMode: groundingMode ?? this.groundingMode,
+      scenario: scenario ?? this.scenario,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
 
   factory AiChatMessage.fromJson(Map<String, dynamic> json) {
     final claims = (json['numericClaims'] as List? ?? [])
@@ -539,9 +683,7 @@ class AiChatMessage {
         .whereType<Map>()
         .map((item) => Map<String, dynamic>.from(item))
         .toList();
-    final followUps = (json['followUpPrompts'] as List? ?? [])
-        .map((item) => item.toString())
-        .toList();
+    final followUps = _extractStructuredTextList(json['followUpPrompts']);
     final role = json['role']?.toString() ??
         ((json['type']?.toString().toUpperCase() == 'INPUT')
             ? 'user'
@@ -580,6 +722,18 @@ class AiChatMessage {
           json['verification_status']?.toString(),
       fallbackMessage: json['fallbackMessage']?.toString() ??
           json['fallback_message']?.toString(),
+      policyStatus: json['policyStatus']?.toString() ??
+          json['policy_status']?.toString() ??
+          'allowed',
+      policyReason: json['policyReason']?.toString() ??
+          json['policy_reason']?.toString(),
+      redirectTarget: json['redirectTarget'] is Map
+          ? Map<String, dynamic>.from(json['redirectTarget'])
+          : json['redirect_target'] is Map
+          ? Map<String, dynamic>.from(json['redirect_target'])
+          : null,
+      groundingMode: json['groundingMode']?.toString() ??
+          json['grounding_mode']?.toString(),
       scenario: json['scenario'] is Map
           ? Map<String, dynamic>.from(json['scenario'])
           : null,
@@ -993,7 +1147,7 @@ class IngredientUsed {
 /// Ingredients provider
 @riverpod
 Future<List<Ingredient>> ingredients(Ref ref) async {
-  final dio = await ref.watch(dioProvider.future);
+  final dio = await ref.read(dioProvider.future);
   final response = await dio.get('/ingredients');
   final data = response.data['ingredients'] as List? ?? [];
   return data.map((i) => Ingredient.fromJson(i)).toList();
@@ -1002,7 +1156,7 @@ Future<List<Ingredient>> ingredients(Ref ref) async {
 /// Feed standards provider
 @riverpod
 Future<List<FeedStandard>> feedStandards(Ref ref) async {
-  final dio = await ref.watch(dioProvider.future);
+  final dio = await ref.read(dioProvider.future);
   final response = await dio.get('/standards');
   final data = response.data['standards'] as List? ?? [];
   return data.map((s) => FeedStandard.fromJson(s)).toList();
@@ -1011,14 +1165,14 @@ Future<List<FeedStandard>> feedStandards(Ref ref) async {
 /// Feed templates provider
 @riverpod
 Future<List<FeedTemplate>> feedTemplates(Ref ref) async {
-  final dio = await ref.watch(dioProvider.future);
+  final dio = await ref.read(dioProvider.future);
   final response = await dio.get('/templates');
   final data = response.data as List? ?? [];
   return data.map((t) => FeedTemplate.fromJson(t)).toList();
 }
 
 /// Formulation notifier for managing the formulation flow
-@riverpod
+@Riverpod(keepAlive: true)
 class FormulationNotifier extends _$FormulationNotifier {
   FormulationRequest? _lastRequest;
 
@@ -1032,7 +1186,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     _lastRequest = request;
 
     try {
-      final dio = await ref.watch(dioProvider.future);
+      final dio = await ref.read(dioProvider.future);
       final response = await dio.post(
         '/formulations/calculate',
         data: request.toJson(),
@@ -1108,7 +1262,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     required FormulationRequest originalRequest,
     required RecommendedAction action,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final response = await dio.post(
       '/formulations/preview-fix',
       data: {
@@ -1149,7 +1303,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String formulationId, {
     String? strategy,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final response = await dio.post(
       '/formulations/$formulationId/unlock',
       data: {
@@ -1249,7 +1403,7 @@ class FormulationNotifier extends _$FormulationNotifier {
   }
 
   Future<CalculationLedger> getCalculationLedger(String formulationId) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final response = await dio.get(
       '/formulations/$formulationId/calculation-ledger',
     );
@@ -1266,7 +1420,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String? feedType,
     String? stageCode,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final path = whatIf
         ? '/ai/formulation-analyst/what-if'
         : '/ai/formulation-analyst/query';
@@ -1293,7 +1447,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String? feedType,
     String? stageCode,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final payload = <String, dynamic>{};
     if (title != null && title.trim().isNotEmpty) {
       payload['title'] = title.trim();
@@ -1328,7 +1482,7 @@ class FormulationNotifier extends _$FormulationNotifier {
   }
 
   Future<AiModelCatalog> getAiModels() async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     try {
       final response = await dio.get('/ai/formulation-analyst/models');
       final models = (response.data['models'] as List? ?? [])
@@ -1345,7 +1499,7 @@ class FormulationNotifier extends _$FormulationNotifier {
   }
 
   Future<List<AiThread>> getAiThreads() async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     try {
       final response = await dio.get('/ai/conversations');
       return (response.data['data'] as List? ?? [])
@@ -1372,7 +1526,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String? modelId,
     bool? streamEnabled,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final payload = <String, dynamic>{};
     if (modelId != null && modelId.trim().isNotEmpty) {
       payload['modelId'] = modelId.trim();
@@ -1400,7 +1554,7 @@ class FormulationNotifier extends _$FormulationNotifier {
   }
 
   Future<List<AiChatMessage>> getAiThreadMessages(String threadId) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     try {
       final response = await dio.get('/ai/conversations/$threadId');
       final data = response.data['data'] is Map
@@ -1446,7 +1600,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String? feedType,
     String? stageCode,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final payload = <String, dynamic>{'message': message.trim()};
     if (formulationId != null && formulationId.trim().isNotEmpty) {
       payload['formulationId'] = formulationId.trim();
@@ -1496,7 +1650,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String? modelId,
     bool? stream,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final payload = <String, dynamic>{'message': message.trim()};
     if (formulationId != null && formulationId.trim().isNotEmpty) {
       payload['formulationId'] = formulationId.trim();
@@ -1546,7 +1700,7 @@ class FormulationNotifier extends _$FormulationNotifier {
   }
 
   Future<AiJobStatusResult> getAiJobStatus(String jobId) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     try {
       final response = await dio.get('/ai/formulation-analyst/jobs/$jobId');
       final jobJson = response.data['job'] is Map
@@ -1575,7 +1729,7 @@ class FormulationNotifier extends _$FormulationNotifier {
   }
 
   Stream<AiStreamEvent> streamAiJob(String jobId) async* {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final response = await dio.get(
       '/ai/formulation-analyst/jobs/$jobId/stream',
       options: Options(
@@ -1635,7 +1789,7 @@ class FormulationNotifier extends _$FormulationNotifier {
     String? stageCode,
     Map<String, dynamic>? parameters,
   }) async {
-    final dio = await ref.watch(dioProvider.future);
+    final dio = await ref.read(dioProvider.future);
     final payload = <String, dynamic>{
       'scenarioType': scenarioType,
       if (parameters != null) 'parameters': parameters,
@@ -1677,7 +1831,7 @@ class FormulationNotifier extends _$FormulationNotifier {
 
   Future<double> getUnlockFee() async {
     try {
-      final dio = await ref.watch(dioProvider.future);
+      final dio = await ref.read(dioProvider.future);
       final response = await dio.get('/formulations/unlock-fee');
       return (response.data['formulationFee'] ?? 10000).toDouble();
     } catch (_) {
